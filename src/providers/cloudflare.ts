@@ -1,5 +1,6 @@
 import type { DnsDomain, DnsRecord } from "../types";
 import type { DnsProvider, ProviderCredentials } from "./interface";
+import { safeJson } from "../utils/http";
 
 const API = "https://api.cloudflare.com/client/v4";
 
@@ -32,9 +33,9 @@ export class CloudflareProvider implements DnsProvider {
         ...(init.headers || {}),
       },
     });
-    const data = (await res.json()) as any;
+    const data = await safeJson(res, "Cloudflare");
     if (!data.success) {
-      throw new Error(`Cloudflare API错误: ${JSON.stringify(data.errors)}`);
+      throw new Error(`Cloudflare API错误(HTTP ${res.status}): ${JSON.stringify(data.errors)}`);
     }
     return data;
   }

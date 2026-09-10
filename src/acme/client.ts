@@ -1,6 +1,7 @@
 import type { DnsProvider } from "../providers/interface";
 import { generateAcmeAccountKey, importAccountKeyFromPkcs8B64, exportAccountKeyPkcs8B64, jwkThumbprint, signAcmeJws } from "./jws";
 import { generateKeyPairAndCsr } from "./csr";
+import { safeJson } from "../utils/http";
 
 const LETSENCRYPT_DIRECTORY = "https://acme-v02.api.letsencrypt.org/directory";
 // 测试环境（不消耗生产速率限制，调试时建议先用这个）：
@@ -32,7 +33,7 @@ export class AcmeClient {
   static async create(email: string, existingAccountKeyPkcs8B64?: string): Promise<AcmeClient> {
     const client = new AcmeClient(email);
     const dirRes = await fetch(LETSENCRYPT_DIRECTORY);
-    client.directory = await dirRes.json();
+    client.directory = await safeJson(dirRes, "ACME目录");
 
     if (existingAccountKeyPkcs8B64) {
       client.accountKey = await importAccountKeyFromPkcs8B64(existingAccountKeyPkcs8B64);
@@ -116,7 +117,7 @@ export class AcmeClient {
       identifiers: allDomains.map((d) => ({ type: "dns", value: d })),
     });
     if (!orderRes.ok) throw new Error(`创建ACME订单失败: ${await orderRes.text()}`);
-    const order = (await orderRes.json()) as any;
+    const order = await safeJson(orderRes, "ACME newOrder");
     const orderUrl = orderRes.headers.get("Location")!;
 
     // 2. 逐个完成 DNS-01 挑战
@@ -124,7 +125,7 @@ export class AcmeClient {
     try {
       for (const authzUrl of order.authorizations as string[]) {
         const authzRes = await this.post(authzUrl, "");
-        const authz = (await authzRes.json()) as any;
+        const authz = await safeJson(authzRes, `ACME authorization ${authzUrl}`);
         const dnsChallenge = authz.challenges.find((c: any) => c.type === "dns-01");
         if (!dnsChallenge) throw new Error(`域名 ${authz.identifier.value} 不支持 DNS-01 验证`);
 
@@ -149,7 +150,7 @@ export class AcmeClient {
         log(`通知 ACME 服务器验证 ${fqdn}`);
         await this.post(dnsChallenge.url, {});
         await this.pollUntil(authzUrl, (a) => a.status === "valid" || a.status === "invalid", 15, 2000);
-        const finalAuthz = await (await this.post(authzUrl, "")).json();
+        const finalAuthz = await safeJson(await this.post(authzUrl, ""), `ACME authorization ${authzUrl}`);
         if ((finalAuthz as any).status !== "valid") {
           throw new Error(`域名 ${fqdn} DNS-01 验证失败: ${JSON.stringify(finalAuthz)}`);
         }
@@ -185,7 +186,7 @@ export class AcmeClient {
   private async pollUntil(url: string, done: (obj: any) => boolean, maxTries: number, intervalMs: number): Promise<any> {
     for (let i = 0; i < maxTries; i++) {
       const res = await this.post(url, "");
-      const obj = await res.json();
+      const obj = await safeJson(res, `ACME poll ${url}`);
       if (done(obj)) return obj;
       await sleep(intervalMs);
     }
