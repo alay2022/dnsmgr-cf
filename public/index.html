@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DNSMGR-CF · 多平台域名解析管理</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app"></div>
+<script>
+  // 部署到 Pages 后，通过环境变量注入你的 Workers API 地址；本地调试默认同源 /api
+  window.API_BASE = window.API_BASE || "https://dnsmgr-cf.alay.workers.dev";
+</script>
+<script src="app.js"></script>
+</body>
+</html>

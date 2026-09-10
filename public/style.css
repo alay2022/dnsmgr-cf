@@ -1,0 +1,84 @@
+:root {
+  --primary: #2563eb;
+  --bg: #f5f7fa;
+  --card: #ffffff;
+  --border: #e2e8f0;
+  --text: #1e293b;
+  --muted: #64748b;
+  --danger: #dc2626;
+  --success: #16a34a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+#app { display: flex; min-height: 100vh; }
+.sidebar {
+  width: 220px;
+  background: #111827;
+  color: #e5e7eb;
+  padding: 16px 0;
+  flex-shrink: 0;
+}
+.sidebar h1 { font-size: 16px; padding: 0 20px; margin-bottom: 20px; }
+.sidebar nav a {
+  display: block;
+  padding: 10px 20px;
+  color: #cbd5e1;
+  text-decoration: none;
+  cursor: pointer;
+  font-size: 14px;
+}
+.sidebar nav a.active, .sidebar nav a:hover { background: #1f2937; color: #fff; }
+.main { flex: 1; padding: 24px; overflow: auto; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 500; }
+button {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+button.secondary { background: #64748b; }
+button.danger { background: var(--danger); }
+button:hover { opacity: .9; }
+input, select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  margin-right: 8px;
+}
+.login-wrap {
+  display: flex; align-items: center; justify-content: center; height: 100vh; width: 100%;
+}
+.login-box {
+  background: #fff; padding: 32px; border-radius: 10px; width: 320px; box-shadow: 0 4px 20px rgba(0,0,0,.08);
+}
+.login-box h2 { margin-top: 0; }
+.login-box input { width: 100%; margin: 8px 0; padding: 10px; }
+.login-box button { width: 100%; padding: 10px; margin-top: 8px; }
+.toast {
+  position: fixed; top: 16px; right: 16px; padding: 10px 16px; border-radius: 6px;
+  background: #111827; color: #fff; font-size: 13px; z-index: 999;
+}
+.toast.error { background: var(--danger); }
+.toast.success { background: var(--success); }
+.tag { padding: 2px 8px; border-radius: 999px; font-size: 12px; background: #e2e8f0; }
+.tag.issued { background: #dcfce7; color: #166534; }
+.tag.pending { background: #fef9c3; color: #854d0e; }
+.tag.failed { background: #fee2e2; color: #991b1b; }

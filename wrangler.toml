@@ -1,0 +1,20 @@
+name = "dnsmgr-cf"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dnsmgr"
+database_id = "365fc304-9ece-42f7-8adf-d65fe4d74deb"
+
+# 每天 02:00 UTC 跑一次证书到期检查与自动续签
+[triggers]
+crons = ["0 2 * * *"]
+
+[vars]
+# 非敏感配置，敏感项请用 `wrangler secret put` 设置：
+# JWT_SECRET, ACME_ACCOUNT_EMAIL
+APP_NAME = "DNSMGR-CF"
+JWT_EXPIRE_SECONDS = "86400"
+APPLINK_EXPIRE_SECONDS = "300"
