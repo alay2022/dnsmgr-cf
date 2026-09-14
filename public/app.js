@@ -121,82 +121,56 @@ function renderPage() {
   (renderers[state.page] || renderDomains)(main);
 }
 
-// ---------------- 域名 / 解析记录（手风琴下拉式） ----------------
+// ---------------- 域名 / 解析记录（下拉框选择域名） ----------------
 async function renderDomains(main) {
-  main.innerHTML = `<div class="card"><h3>域名列表</h3><div id="domainList">加载中...</div></div>`;
+  main.innerHTML = `<div class="card">
+      <h3>域名 / 解析记录</h3>
+      <select id="domainSelect"></select>
+    </div>
+    <div class="card" id="recordsCard" style="display:none">
+      <h3>解析记录</h3>
+      <div id="recordForm"></div>
+      <div id="recordList"></div>
+    </div>`;
   try {
     const domains = await api("/domains");
     state.domains = domains;
-    const listEl = document.getElementById("domainList");
+    const select = document.getElementById("domainSelect");
     if (!domains.length) {
-      listEl.innerHTML = `<p>暂无域名，请先在「解析平台账号」中添加账号并同步域名。</p>`;
+      select.outerHTML = `<p>暂无域名，请先在「解析平台账号」中添加账号并同步域名。</p>`;
       return;
     }
-    listEl.innerHTML = domains
-      .map(
-        (d) => `
-      <div class="accordion-item" id="domain-item-${d.id}">
-        <div class="accordion-header" data-id="${d.id}">
-          <div>
-            <span class="domain-name">${d.domain_name}</span>
-            <span class="domain-meta">${d.provider_type} · ${d.status}</span>
-          </div>
-          <span class="accordion-arrow">▶</span>
-        </div>
-        <div class="accordion-body" id="domain-body-${d.id}"></div>
-      </div>`
-      )
+    select.innerHTML = domains
+      .map((d) => `<option value="${d.id}">${d.domain_name}（${d.provider_type} · ${d.status}）</option>`)
       .join("");
-
-    document.querySelectorAll(".accordion-header").forEach((header) => {
-      header.onclick = () => toggleDomainAccordion(Number(header.dataset.id));
-    });
+    select.onchange = () => loadRecords(Number(select.value));
+    loadRecords(Number(select.value));
   } catch (e) {
-    document.getElementById("domainList").innerHTML = `<p style="color:red">${e.message}</p>`;
+    document.getElementById("domainSelect").outerHTML = `<p style="color:red">${e.message}</p>`;
   }
-}
-
-function toggleDomainAccordion(domainId) {
-  const item = document.getElementById(`domain-item-${domainId}`);
-  const isOpen = item.classList.contains("open");
-
-  // 手风琴效果：展开一个之前，先收起其他已展开的
-  document.querySelectorAll(".accordion-item.open").forEach((el) => {
-    if (el !== item) el.classList.remove("open");
-  });
-
-  if (isOpen) {
-    item.classList.remove("open");
-    return;
-  }
-  item.classList.add("open");
-  loadRecords(domainId);
 }
 
 async function loadRecords(domainId) {
   state.currentDomainId = domainId;
-  const body = document.getElementById(`domain-body-${domainId}`);
-  body.innerHTML = `
-    <div id="recordForm-${domainId}"></div>
-    <div id="recordList-${domainId}">加载中...</div>`;
+  document.getElementById("recordsCard").style.display = "block";
 
-  document.getElementById(`recordForm-${domainId}`).innerHTML = `
-    <input id="rr-${domainId}" placeholder="主机记录 如 www / @" />
-    <select id="type-${domainId}">
+  document.getElementById("recordForm").innerHTML = `
+    <input id="rr" placeholder="主机记录 如 www / @" />
+    <select id="type">
       <option>A</option><option>AAAA</option><option>CNAME</option><option>TXT</option><option>MX</option><option>NS</option>
     </select>
-    <input id="value-${domainId}" placeholder="记录值" />
-    <input id="ttl-${domainId}" placeholder="TTL" value="600" style="width:80px" />
-    <button id="addRecordBtn-${domainId}">添加记录</button>`;
-  document.getElementById(`addRecordBtn-${domainId}`).onclick = async () => {
+    <input id="value" placeholder="记录值" />
+    <input id="ttl" placeholder="TTL" value="600" style="width:80px" />
+    <button id="addRecordBtn">添加记录</button>`;
+  document.getElementById("addRecordBtn").onclick = async () => {
     try {
       await api(`/domains/${domainId}/records`, {
         method: "POST",
         body: {
-          rr: document.getElementById(`rr-${domainId}`).value,
-          type: document.getElementById(`type-${domainId}`).value,
-          value: document.getElementById(`value-${domainId}`).value,
-          ttl: Number(document.getElementById(`ttl-${domainId}`).value) || 600,
+          rr: document.getElementById("rr").value,
+          type: document.getElementById("type").value,
+          value: document.getElementById("value").value,
+          ttl: Number(document.getElementById("ttl").value) || 600,
         },
       });
       toast("添加成功", "success");
@@ -206,14 +180,15 @@ async function loadRecords(domainId) {
     }
   };
 
-  const listEl = document.getElementById(`recordList-${domainId}`);
+  const listEl = document.getElementById("recordList");
+  listEl.innerHTML = "加载中...";
   try {
     const records = await api(`/domains/${domainId}/records`);
     listEl.innerHTML = records.length
       ? `<table><tr><th>主机记录</th><th>类型</th><th>值</th><th>TTL</th><th>操作</th></tr>${records
           .map(
             (r) => `<tr><td>${r.rr}</td><td>${r.type}</td><td>${r.value}</td><td>${r.ttl}</td>
-              <td><button class="danger delRecord" data-id="${r.id}" data-domain="${domainId}">删除</button></td></tr>`
+              <td><button class="danger delRecord" data-id="${r.id}">删除</button></td></tr>`
           )
           .join("")}</table>`
       : `<p>暂无解析记录</p>`;
@@ -222,9 +197,9 @@ async function loadRecords(domainId) {
         (btn.onclick = async () => {
           if (!confirm("确认删除该记录？")) return;
           try {
-            await api(`/domains/${btn.dataset.domain}/records/${btn.dataset.id}`, { method: "DELETE" });
+            await api(`/domains/${domainId}/records/${btn.dataset.id}`, { method: "DELETE" });
             toast("已删除", "success");
-            loadRecords(Number(btn.dataset.domain));
+            loadRecords(domainId);
           } catch (e) {
             toast(e.message, "error");
           }
