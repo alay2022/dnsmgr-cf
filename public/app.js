@@ -418,6 +418,7 @@ function pollCertStatus(domainId, certId, onUpdate, triesLeft = 24) {
       pollCertStatus(domainId, certId, onUpdate, triesLeft - 1);
     }
   }, 5000);
+}
 
 // ---------------- 用户管理 ----------------
 async function renderUsers(main) {
