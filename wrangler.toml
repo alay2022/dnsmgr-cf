@@ -8,13 +8,21 @@ binding = "DB"
 database_name = "dnsmgr"
 database_id = "365fc304-9ece-42f7-8adf-d65fe4d74deb"
 
-# 每天 02:00 UTC 跑一次证书到期检查与自动续签
-[triggers]
-crons = ["0 2 * * *"]
+# 注意：证书签发/续签已经搬到 GitHub Actions 里跑（见 .github/workflows/），
+# 本项目不再使用 Workers 自己的 Cron Trigger，所以这里没有 [triggers] 配置了。
+# 续签检查由 .github/workflows/renew-certs.yml 的 schedule 触发。
 
 [vars]
 # 非敏感配置，敏感项请用 `wrangler secret put` 设置：
-# JWT_SECRET, ACME_ACCOUNT_EMAIL
+# JWT_SECRET, ACME_ACCOUNT_EMAIL, GITHUB_TOKEN, CI_CALLBACK_SECRET,
+# ACME_EAB_KID（如用ZeroSSL）, ACME_EAB_HMAC_KEY（如用ZeroSSL）
 APP_NAME = "DNSMGR-CF"
 JWT_EXPIRE_SECONDS = "86400"
 APPLINK_EXPIRE_SECONDS = "300"
+CI_TOKEN_EXPIRE_SECONDS = "1800"
+GITHUB_OWNER = "alay2022"
+GITHUB_REPO = "dnsmgr-cf"
+GITHUB_REF = "main"
+# 可选：如遇到 Cloudflare Workers 访问 Let's Encrypt 的已知525问题（见README「已知问题」），
+# 取消下面这行注释切换到 ZeroSSL（免费，但需要额外配置EAB凭据，见README说明）：
+# ACME_DIRECTORY_URL = "https://acme.zerossl.com/v2/DV90"

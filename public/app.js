@@ -357,9 +357,10 @@ async function renderSsl(main) {
     document.querySelectorAll(".renew").forEach(
       (btn) => (btn.onclick = async () => {
         try {
-          await api(`/domains/${domainId}/certs/${btn.dataset.id}/renew`, { method: "POST" });
-          toast("续签成功", "success");
+          const r = await api(`/domains/${domainId}/certs/${btn.dataset.id}/renew`, { method: "POST" });
+          toast("已提交续签，正在后台处理中，可能需要1~3分钟", "success");
           loadCerts();
+          pollCertStatus(domainId, Number(btn.dataset.id), loadCerts);
         } catch (e) {
           toast(e.message, "error");
         }
@@ -375,15 +376,37 @@ async function renderSsl(main) {
     const sansRaw = document.getElementById("sans").value;
     const sans = sansRaw ? sansRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
     try {
-      toast("正在申请证书，请稍候（可能需要1~3分钟）...");
       const r = await api(`/domains/${domainId}/certs`, { method: "POST", body: { commonName: cn, sans } });
-      toast(r.ok ? "证书申请成功" : r.error, r.ok ? "success" : "error");
+      toast("已提交申请，正在后台签发中，可能需要1~3分钟，请不要重复点击", "success");
       loadCerts();
+      pollCertStatus(domainId, r.certId, loadCerts);
     } catch (e) {
       toast(e.message, "error");
     }
   };
 }
+
+/** 每隔5秒刷新一次证书列表，最多轮询2分钟，直到状态不再是pending（签发在Worker后台异步执行，不依赖本次页面停留） */
+function pollCertStatus(domainId, certId, onUpdate, triesLeft = 24) {
+  if (triesLeft <= 0) return;
+  setTimeout(async () => {
+    try {
+      const certs = await api(`/domains/${domainId}/certs`);
+      const cert = certs.find((c) => c.id === certId);
+      if (cert && cert.status === "issued") {
+        toast(`证书 ${cert.common_name} 签发成功`, "success");
+        onUpdate();
+      } else if (cert && cert.status === "failed") {
+        toast(`证书 ${cert.common_name} 签发失败，请查看 wrangler tail 日志`, "error");
+        onUpdate();
+      } else {
+        onUpdate();
+        pollCertStatus(domainId, certId, onUpdate, triesLeft - 1);
+      }
+    } catch (e) {
+      pollCertStatus(domainId, certId, onUpdate, triesLeft - 1);
+    }
+  }, 5000);
 
 // ---------------- 用户管理 ----------------
 async function renderUsers(main) {

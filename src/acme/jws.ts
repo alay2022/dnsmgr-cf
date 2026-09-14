@@ -4,6 +4,11 @@ function b64url(bytes: Uint8Array | ArrayBuffer | string): string {
   arr.forEach((b) => (str += String.fromCharCode(b)));
   return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
+function b64urlToBytes(s: string): Uint8Array {
+  const padded = s.replace(/-/g, "+").replace(/_/g, "/").padEnd(s.length + ((4 - (s.length % 4)) % 4), "=");
+  const bin = atob(padded);
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
 
 export interface AcmeAccountKey {
   privateKey: CryptoKey;
@@ -71,4 +76,26 @@ export async function signAcmeJws(opts: {
   const signature = b64url(sigRaw);
 
   return { protected: encProtected, payload: encPayload, signature };
+}
+
+/**
+ * 生成 External Account Binding (EAB) JWS，ZeroSSL / Google Trust Services 等CA
+ * 要求注册账户时必须附带，用于证明你持有该CA颁发的 Key ID + HMAC Key。
+ */
+export async function signEabJws(opts: {
+  accountJwk: { kty: string; crv: string; x: string; y: string };
+  eabKid: string;
+  eabHmacKeyB64Url: string;
+  url: string;
+}): Promise<Record<string, unknown>> {
+  const protectedHeader = { alg: "HS256", kid: opts.eabKid, url: opts.url };
+  const encProtected = b64url(JSON.stringify(protectedHeader));
+  const encPayload = b64url(JSON.stringify(opts.accountJwk));
+  const signingInput = `${encProtected}.${encPayload}`;
+
+  const keyBytes = b64urlToBytes(opts.eabHmacKeyB64Url);
+  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signingInput)));
+
+  return { protected: encProtected, payload: encPayload, signature: b64url(sig) };
 }

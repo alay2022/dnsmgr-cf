@@ -21,8 +21,8 @@ export async function handleScheduled(env: Env) {
 
     try {
       const dnsProvider = await createProviderInstance(env, domain.provider_type, domain.provider_credentials);
-      const acme = await AcmeClient.create(env.ACME_ACCOUNT_EMAIL);
-      await acme.ensureAccount();
+      const acme = await AcmeClient.create(env.ACME_ACCOUNT_EMAIL, undefined, env.ACME_DIRECTORY_URL);
+      await acme.ensureAccount(env.ACME_EAB_KID && env.ACME_EAB_HMAC_KEY ? { kid: env.ACME_EAB_KID, hmacKey: env.ACME_EAB_HMAC_KEY } : undefined);
       const result = await acme.issueCertificate({
         commonName: cert.common_name,
         sans: JSON.parse(cert.sans || "[]"),

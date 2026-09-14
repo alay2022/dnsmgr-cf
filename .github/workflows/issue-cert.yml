@@ -1,0 +1,51 @@
+name: Issue SSL Certificate
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain_id:
+        description: "域名ID"
+        required: true
+      cert_id:
+        description: "证书记录ID"
+        required: true
+      common_name:
+        description: "主域名（CN）"
+        required: true
+      sans:
+        description: "附加SAN，逗号分隔（可为空）"
+        required: false
+        default: ""
+      root_domain:
+        description: "根域名（用于DNS-01写TXT记录）"
+        required: true
+
+jobs:
+  issue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Issue certificate
+        env:
+          WORKER_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
+          DNSMGR_API_KEY: ${{ secrets.DNSMGR_API_KEY }}
+          DNSMGR_API_SECRET: ${{ secrets.DNSMGR_API_SECRET }}
+          CI_CALLBACK_SECRET: ${{ secrets.CI_CALLBACK_SECRET }}
+          ACME_ACCOUNT_EMAIL: ${{ secrets.ACME_ACCOUNT_EMAIL }}
+          ACME_DIRECTORY_URL: ${{ secrets.ACME_DIRECTORY_URL }}
+          ACME_EAB_KID: ${{ secrets.ACME_EAB_KID }}
+          ACME_EAB_HMAC_KEY: ${{ secrets.ACME_EAB_HMAC_KEY }}
+          DOMAIN_ID: ${{ inputs.domain_id }}
+          CERT_ID: ${{ inputs.cert_id }}
+          COMMON_NAME: ${{ inputs.common_name }}
+          SANS: ${{ inputs.sans }}
+          ROOT_DOMAIN: ${{ inputs.root_domain }}
+        run: npx tsx scripts/issue-cert.ts

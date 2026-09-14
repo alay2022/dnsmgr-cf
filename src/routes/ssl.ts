@@ -2,8 +2,7 @@ import { Hono } from "hono";
 import type { Env, JwtPayload } from "../types";
 import { requireAuth, requireDomainPerm } from "../middleware/auth";
 import { getDomainById, now, insertAuditLog } from "../db";
-import { createProviderInstance } from "../providers/registry";
-import { AcmeClient } from "../acme/client";
+import { triggerGithubWorkflow } from "../github";
 
 export const sslRoutes = new Hono<{ Bindings: Env }>();
 sslRoutes.use("*", requireAuth);
@@ -18,7 +17,9 @@ sslRoutes.get("/:domainId/certs", requireDomainPerm(false), async (c) => {
 
 /**
  * 申请证书：body: { commonName, sans?: string[], autoRenew?: boolean }
- * 自动通过对应域名的 DNS Provider 完成 DNS-01 验证并写回证书。
+ * 实际签发工作已经搬到 GitHub Actions 里跑（避开 Cloudflare Workers Free 计划10ms CPU时间限制），
+ * 这里只负责：插入一条 pending 记录，然后触发 GitHub 的 issue-cert.yml workflow。
+ * 前端轮询 GET /:domainId/certs 来获取最终状态（GitHub Actions 跑完后会回调 /api/ci/certs/:id/complete）。
  */
 sslRoutes.post("/:domainId/certs", requireDomainPerm(true), async (c) => {
   const user = c.get("user") as JwtPayload;
@@ -38,29 +39,20 @@ sslRoutes.post("/:domainId/certs", requireDomainPerm(true), async (c) => {
   const certId = insertRes.meta.last_row_id;
 
   try {
-    const dnsProvider = await createProviderInstance(c.env, domain.provider_type, domain.provider_credentials);
-    const acme = await AcmeClient.create(c.env.ACME_ACCOUNT_EMAIL);
-    await acme.ensureAccount();
-
-    const result = await acme.issueCertificate({
-      commonName,
-      sans: sans || [],
-      dnsProvider,
-      rootDomain: domain.domain_name,
+    await triggerGithubWorkflow(c.env, "issue-cert.yml", {
+      domain_id: String(domainId),
+      cert_id: String(certId),
+      common_name: commonName,
+      sans: (sans || []).join(","),
+      root_domain: domain.domain_name,
     });
-
-    await c.env.DB.prepare(
-      `UPDATE ssl_certs SET status='issued', cert_pem=?, key_pem=?, issued_at=?, expires_at=?, updated_at=? WHERE id=?`
-    )
-      .bind(result.certPem, result.keyPem, now(), result.expiresAt, now(), certId)
-      .run();
-
-    await insertAuditLog(c.env, user.uid, "issue_cert", `${domain.domain_name}(${commonName})`);
-    return c.json({ ok: true, certId });
+    await insertAuditLog(c.env, user.uid, "trigger_issue_cert", `${domain.domain_name}(${commonName})`);
   } catch (e: any) {
     await c.env.DB.prepare("UPDATE ssl_certs SET status='failed', updated_at=? WHERE id=?").bind(now(), certId).run();
     return c.json({ ok: false, error: e.message }, 500);
   }
+
+  return c.json({ ok: true, certId, status: "pending" });
 });
 
 sslRoutes.get("/:domainId/certs/:certId/download", requireDomainPerm(false), async (c) => {
@@ -70,6 +62,7 @@ sslRoutes.get("/:domainId/certs/:certId/download", requireDomainPerm(false), asy
   return c.json({ certPem: row.cert_pem, keyPem: row.key_pem, expiresAt: row.expires_at });
 });
 
+/** 续签同样只负责把状态置回 pending 并触发 workflow，实际工作交给 GitHub Actions */
 sslRoutes.post("/:domainId/certs/:certId/renew", requireDomainPerm(true), async (c) => {
   const user = c.get("user") as JwtPayload;
   const domainId = Number(c.req.param("domainId"));
@@ -78,24 +71,21 @@ sslRoutes.post("/:domainId/certs/:certId/renew", requireDomainPerm(true), async 
   const cert = await c.env.DB.prepare("SELECT * FROM ssl_certs WHERE id = ?").bind(certId).first<any>();
   if (!domain || !cert) return c.json({ error: "记录不存在" }, 404);
 
+  await c.env.DB.prepare("UPDATE ssl_certs SET status='pending', updated_at=? WHERE id=?").bind(now(), certId).run();
+
   try {
-    const dnsProvider = await createProviderInstance(c.env, domain.provider_type, domain.provider_credentials);
-    const acme = await AcmeClient.create(c.env.ACME_ACCOUNT_EMAIL);
-    await acme.ensureAccount();
-    const result = await acme.issueCertificate({
-      commonName: cert.common_name,
-      sans: JSON.parse(cert.sans || "[]"),
-      dnsProvider,
-      rootDomain: domain.domain_name,
+    await triggerGithubWorkflow(c.env, "issue-cert.yml", {
+      domain_id: String(domainId),
+      cert_id: String(certId),
+      common_name: cert.common_name,
+      sans: JSON.parse(cert.sans || "[]").join(","),
+      root_domain: domain.domain_name,
     });
-    await c.env.DB.prepare(
-      `UPDATE ssl_certs SET status='issued', cert_pem=?, key_pem=?, issued_at=?, expires_at=?, updated_at=? WHERE id=?`
-    )
-      .bind(result.certPem, result.keyPem, now(), result.expiresAt, now(), certId)
-      .run();
-    await insertAuditLog(c.env, user.uid, "renew_cert", `${domain.domain_name}(${cert.common_name})`);
-    return c.json({ ok: true });
+    await insertAuditLog(c.env, user.uid, "trigger_renew_cert", `${domain.domain_name}(${cert.common_name})`);
   } catch (e: any) {
+    await c.env.DB.prepare("UPDATE ssl_certs SET status='failed', updated_at=? WHERE id=?").bind(now(), certId).run();
     return c.json({ ok: false, error: e.message }, 500);
   }
+
+  return c.json({ ok: true, status: "pending" });
 });

@@ -1,9 +1,12 @@
 import type { DnsProvider } from "../providers/interface";
-import { generateAcmeAccountKey, importAccountKeyFromPkcs8B64, exportAccountKeyPkcs8B64, jwkThumbprint, signAcmeJws } from "./jws";
+import { generateAcmeAccountKey, importAccountKeyFromPkcs8B64, exportAccountKeyPkcs8B64, jwkThumbprint, signAcmeJws, signEabJws } from "./jws";
 import { generateKeyPairAndCsr } from "./csr";
 import { safeJson } from "../utils/http";
 
 const LETSENCRYPT_DIRECTORY = "https://acme-v02.api.letsencrypt.org/directory";
+// 备选：Buypass Go SSL，免费、兼容ACMEv2、无需EAB，且不在Cloudflare网络上，
+// 如果 Let's Encrypt 因 Cloudflare Workers 平台已知的525问题无法访问，可切换到这个：
+// const LETSENCRYPT_DIRECTORY = "https://api.buypass.com/acme/directory";
 // 测试环境（不消耗生产速率限制，调试时建议先用这个）：
 // const LETSENCRYPT_DIRECTORY = "https://acme-staging-v02.api.letsencrypt.org/directory";
 
@@ -30,9 +33,9 @@ export class AcmeClient {
 
   private constructor(private email: string) {}
 
-  static async create(email: string, existingAccountKeyPkcs8B64?: string): Promise<AcmeClient> {
+  static async create(email: string, existingAccountKeyPkcs8B64?: string, directoryUrl: string = LETSENCRYPT_DIRECTORY): Promise<AcmeClient> {
     const client = new AcmeClient(email);
-    const dirRes = await fetch(LETSENCRYPT_DIRECTORY);
+    const dirRes = await fetch(directoryUrl);
     client.directory = await safeJson(dirRes, "ACME目录");
 
     if (existingAccountKeyPkcs8B64) {
@@ -84,12 +87,25 @@ export class AcmeClient {
     return res;
   }
 
-  /** 注册或获取已有账户，返回账户URL（kid） */
-  async ensureAccount(): Promise<string> {
-    const res = await this.post(this.directory.newAccount, {
+  /**
+   * 注册或获取已有账户，返回账户URL（kid）。
+   * eab: ZeroSSL / Google Trust Services 等要求 External Account Binding 的CA需要传入
+   *      { kid, hmacKey }（从对应CA的开发者后台获取，一次生成永久可复用）。
+   */
+  async ensureAccount(eab?: { kid: string; hmacKey: string }): Promise<string> {
+    const payload: Record<string, unknown> = {
       termsOfServiceAgreed: true,
       contact: [`mailto:${this.email}`],
-    });
+    };
+    if (eab) {
+      payload.externalAccountBinding = await signEabJws({
+        accountJwk: this.accountJwk,
+        eabKid: eab.kid,
+        eabHmacKeyB64Url: eab.hmacKey,
+        url: this.directory.newAccount,
+      });
+    }
+    const res = await this.post(this.directory.newAccount, payload);
     if (!res.ok && res.status !== 200) {
       throw new Error(`ACME账户注册失败: ${res.status} ${await res.text()}`);
     }
