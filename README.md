@@ -1,6 +1,6 @@
 # DNSMGR-CF
 
-基于 **Cloudflare Workers + D1** 实现的多平台域名解析统一管理系统（参考 [netcccyun/dnsmgr](https://github.com/netcccyun/dnsmgr) 的功能定位，架构改为 Cloudflare 原生技术栈）。
+基于 **Cloudflare Workers + D1** 实现的多平台域名解析统一管理的系统。
 
 ## 技术栈
 
