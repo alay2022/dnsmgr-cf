@@ -337,12 +337,23 @@ async function renderSsl(main) {
               <td>${c.expires_at ? new Date(c.expires_at * 1000).toLocaleDateString() : "-"}</td>
               <td>${
                 c.status === "issued"
-                  ? `<button class="dl" data-id="${c.id}">下载</button> <button class="renew secondary" data-id="${c.id}">续签</button>`
+                  ? `<button class="view secondary" data-id="${c.id}">查看</button> <button class="dl" data-id="${c.id}">下载</button> <button class="renew secondary" data-id="${c.id}">续签</button>`
                   : ""
               }</td></tr>`
           )
           .join("")}</table>`
       : `<p>该域名暂无证书</p>`;
+
+    document.querySelectorAll(".view").forEach(
+      (btn) => (btn.onclick = async () => {
+        try {
+          const data = await api(`/domains/${domainId}/certs/${btn.dataset.id}/download`);
+          showCertModal(data.certPem, data.keyPem);
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      })
+    );
 
     document.querySelectorAll(".dl").forEach(
       (btn) => (btn.onclick = async () => {
@@ -571,6 +582,42 @@ async function renderApplink(main) {
       renderApplink(main);
     })
   );
+}
+
+// ---------------- 证书查看弹窗 ----------------
+function showCertModal(certPem, keyPem) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <h3>证书内容</h3>
+      <label>证书（Certificate）</label>
+      <textarea id="certText" readonly>${certPem || ""}</textarea>
+      <label>私钥（Private Key）</label>
+      <textarea id="keyText" readonly>${keyPem || ""}</textarea>
+      <div class="modal-actions">
+        <button class="secondary" id="copyCertBtn">复制证书</button>
+        <button class="secondary" id="copyKeyBtn">复制私钥</button>
+        <button id="closeCertModalBtn">关闭</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const copy = async (text, label) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(`${label}已复制到剪贴板`, "success");
+    } catch {
+      // 部分浏览器/非HTTPS环境剪贴板API不可用，退化为手动选中
+      toast(`自动复制失败，请手动选中${label}文本框内容复制`, "error");
+    }
+  };
+  document.getElementById("copyCertBtn").onclick = () => copy(certPem || "", "证书");
+  document.getElementById("copyKeyBtn").onclick = () => copy(keyPem || "", "私钥");
+  document.getElementById("closeCertModalBtn").onclick = () => overlay.remove();
+  overlay.onclick = (e) => {
+    if (e.target === overlay) overlay.remove();
+  };
 }
 
 // ---------------- 渲染入口 ----------------
