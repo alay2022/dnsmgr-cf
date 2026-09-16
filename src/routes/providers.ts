@@ -56,23 +56,50 @@ providerRoutes.post("/:id/test", async (c) => {
   }
 });
 
-/** 从平台侧同步域名列表到本地 domains 表 */
-providerRoutes.post("/:id/sync-domains", async (c) => {
+/**
+ * 从平台侧拉取域名列表，仅用于展示供管理员勾选，不写入数据库。
+ * 返回结果会标注 imported: 是否已经导入过。
+ */
+providerRoutes.post("/:id/discover-domains", async (c) => {
   const id = Number(c.req.param("id"));
   const row = await c.env.DB.prepare("SELECT * FROM dns_providers WHERE id = ?").bind(id).first();
   if (!row) return c.json({ error: "账号不存在" }, 404);
 
   const instance = await createProviderInstance(c.env, (row as any).type, (row as any).credentials);
   const domains = await instance.listDomains();
+
+  const { results: imported } = await c.env.DB.prepare("SELECT domain_name FROM domains WHERE provider_id = ?")
+    .bind(id)
+    .all<{ domain_name: string }>();
+  const importedSet = new Set(imported.map((r) => r.domain_name));
+
+  return c.json(
+    domains.map((d) => ({ domainName: d.domainName, status: d.status, imported: importedSet.has(d.domainName) }))
+  );
+});
+
+/** 把勾选的域名导入到本地管理：body: { domainNames: string[] } */
+providerRoutes.post("/:id/import-domains", async (c) => {
+  const id = Number(c.req.param("id"));
+  const { domainNames } = await c.req.json<{ domainNames: string[] }>();
+  if (!Array.isArray(domainNames) || !domainNames.length) return c.json({ error: "请至少选择一个域名" }, 400);
+
+  const row = await c.env.DB.prepare("SELECT * FROM dns_providers WHERE id = ?").bind(id).first();
+  if (!row) return c.json({ error: "账号不存在" }, 404);
+
+  // 导入的域名排在当前最大 sort_order 之后
+  const maxRow = await c.env.DB.prepare("SELECT MAX(sort_order) as maxOrder FROM domains").first<{ maxOrder: number | null }>();
+  let nextOrder = (maxRow?.maxOrder ?? 0) + 1;
+
   const ts = now();
-  for (const d of domains) {
+  for (const domainName of domainNames) {
     await c.env.DB.prepare(
-      `INSERT INTO domains (provider_id, domain_name, status, synced_at, created_at)
-       VALUES (?,?,?,?,?)
+      `INSERT INTO domains (provider_id, domain_name, status, sort_order, synced_at, created_at)
+       VALUES (?,?,?,?,?,?)
        ON CONFLICT(provider_id, domain_name) DO UPDATE SET status = excluded.status, synced_at = excluded.synced_at`
     )
-      .bind(id, d.domainName, d.status || "active", ts, ts)
+      .bind(id, domainName, "active", nextOrder++, ts, ts)
       .run();
   }
-  return c.json({ ok: true, synced: domains.length });
+  return c.json({ ok: true, imported: domainNames.length });
 });

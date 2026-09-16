@@ -46,6 +46,8 @@ export interface DnsRecord {
   line?: string;         // 线路（部分平台支持，如默认/电信/联通）
   priority?: number;     // MX优先级
   status?: string;
+  proxied?: boolean;     // 仅Cloudflare支持：是否启用CDN代理（橙色云朵）
+  remark?: string;       // 本地备注，存储在本项目数据库，不属于任何解析平台的原始字段
 }
 
 export interface DnsDomain {

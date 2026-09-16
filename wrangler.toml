@@ -6,7 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "dnsmgr"
-database_id = "365fc304-9ece-42f7-8adf-d65fe4d74deb"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 
 # 注意：证书签发/续签已经搬到 GitHub Actions 里跑（见 .github/workflows/），
 # 本项目不再使用 Workers 自己的 Cron Trigger，所以这里没有 [triggers] 配置了。

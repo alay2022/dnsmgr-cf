@@ -1,6 +1,6 @@
 # DNSMGR-CF
 
-基于 **Cloudflare Workers + D1** 实现的多平台域名解析统一管理的系统。
+基于 **Cloudflare Workers + D1** 实现的多平台域名解析统一管理系统（参考 [netcccyun/dnsmgr](https://github.com/netcccyun/dnsmgr) 的功能定位，架构改为 Cloudflare 原生技术栈）。
 
 ## 技术栈
 
@@ -19,6 +19,7 @@
 dnsmgr-cf/
 ├── wrangler.toml            # Workers 配置（含 D1 绑定、Cron）
 ├── migrations/0001_init.sql # D1 建表 SQL
+├── migrations/0002_features.sql # 域名排序/记录备注/收藏夹 增量迁移
 ├── src/
 │   ├── index.ts             # Hono 入口，路由汇总
 │   ├── types.ts             # 公共类型
@@ -51,6 +52,8 @@ dnsmgr-cf/
 │       ├── ssl.ts           # 证书申请/续签/下载（实际签发已转交GitHub Actions）
 │       ├── notify.ts        # 通知渠道配置与测试发送
 │       └── ci.ts            # 供 GitHub Actions 调用：CI token签发、签发结果回调、待续签列表
+│       ├── overview.ts      # 概览页统计数据
+│       └── tools.ts         # 工具箱：DNS查询/whois查询/证书透明度日志查询
 ├── scripts/                 # GitHub Actions 里跑的证书签发脚本（Node.js，用 tsx 直接运行，无需编译）
 │   ├── lib.ts                # 共用逻辑：包装Worker的DNS记录API为DnsProvider、执行ACME签发
 │   ├── issue-cert.ts         # 单次签发入口（workflow_dispatch调用）
@@ -70,13 +73,16 @@ dnsmgr-cf/
 npm install
 npx wrangler login
 
-# 1. 创建 D1 数据库
+# 2. 创建 D1 数据库
 npx wrangler d1 create dnsmgr
 
 # 把返回的 database_id 填入 wrangler.toml 的 [[d1_databases]]
 
-# 2. 执行建表
+# 3. 执行建表（两个迁移文件都要按顺序执行）
 npx wrangler d1 execute dnsmgr --file=./migrations/0001_init.sql --remote
+npx wrangler d1 execute dnsmgr --file=./migrations/0002_features.sql --remote
+# 0002_features.sql 新增了域名排序 / 解析记录备注 / 收藏夹功能用到的字段和表，
+# 如果你是老项目升级（之前已经执行过0001但没执行过0002），务必补上这一条。
 
 # 3. 设置必需的密钥（JWT 签名密钥、ACME 账户邮箱等）
 npx wrangler secret put JWT_SECRET

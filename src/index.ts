@@ -9,6 +9,8 @@ import { applinkRoutes } from "./routes/applink";
 import { sslRoutes } from "./routes/ssl";
 import { notifyRoutes } from "./routes/notify";
 import { ciTokenRoutes, ciCallbackRoutes } from "./routes/ci";
+import { overviewRoutes } from "./routes/overview";
+import { toolsRoutes } from "./routes/tools";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -33,6 +35,8 @@ app.route("/api/notify", notifyRoutes);
 app.route("/api/open", applinkRoutes); // /api/open/applink, /api/open/keys
 app.route("/api/open", ciTokenRoutes); // /api/open/ci-token
 app.route("/api/ci", ciCallbackRoutes); // /api/ci/certs/:id/complete, /api/ci/due-for-renewal
+app.route("/api/overview", overviewRoutes);
+app.route("/api/tools", toolsRoutes);
 
 app.notFound((c) => c.json({ error: "Not Found" }, 404));
 app.onError((err, c) => {

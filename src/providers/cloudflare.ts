@@ -61,6 +61,7 @@ export class CloudflareProvider implements DnsProvider {
       value: r.content,
       ttl: r.ttl,
       priority: r.priority,
+      proxied: !!r.proxied,
     }));
   }
 
@@ -73,8 +74,9 @@ export class CloudflareProvider implements DnsProvider {
         type: record.type,
         name,
         content: record.value,
-        ttl: record.ttl || 1, // 1 = Automatic
+        ttl: record.proxied ? 1 : record.ttl || 1, // 开启代理时TTL必须为Automatic(1)
         priority: record.priority,
+        proxied: !!record.proxied,
       }),
     });
     return data.result.id;
@@ -89,8 +91,9 @@ export class CloudflareProvider implements DnsProvider {
         type: record.type,
         name,
         content: record.value,
-        ttl: record.ttl || 1,
+        ttl: record.proxied ? 1 : record.ttl || 1,
         priority: record.priority,
+        proxied: !!record.proxied,
       }),
     });
   }

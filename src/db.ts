@@ -59,7 +59,7 @@ export async function listDomainsForUser(env: Env, userId: number, role: string)
     const { results } = await env.DB.prepare(
       `SELECT d.*, p.type as provider_type, p.name as provider_name
        FROM domains d JOIN dns_providers p ON d.provider_id = p.id
-       ORDER BY d.id`
+       ORDER BY d.sort_order ASC, d.id ASC`
     ).all();
     return results;
   }
@@ -69,7 +69,7 @@ export async function listDomainsForUser(env: Env, userId: number, role: string)
      JOIN user_domain_perms up ON up.domain_id = d.id
      JOIN dns_providers p ON d.provider_id = p.id
      WHERE up.user_id = ?
-     ORDER BY d.id`
+     ORDER BY d.sort_order ASC, d.id ASC`
   )
     .bind(userId)
     .all();
@@ -90,5 +90,43 @@ export async function insertAuditLog(env: Env, userId: number | null, action: st
     "INSERT INTO audit_logs (user_id, action, target, detail, ip, created_at) VALUES (?,?,?,?,?,?)"
   )
     .bind(userId, action, target ?? null, detail ?? null, ip ?? null, now())
+    .run();
+}
+
+/** 按传入顺序重新赋值 sort_order（数组下标即为新顺序） */
+export async function reorderDomains(env: Env, orderedIds: number[]) {
+  const stmts = orderedIds.map((id, index) =>
+    env.DB.prepare("UPDATE domains SET sort_order = ? WHERE id = ?").bind(index, id)
+  );
+  await env.DB.batch(stmts);
+}
+
+/** 批量删除域名，同时清理关联的权限、证书、备注、收藏记录 */
+export async function batchDeleteDomains(env: Env, domainIds: number[]) {
+  for (const id of domainIds) {
+    await env.DB.prepare("DELETE FROM user_domain_perms WHERE domain_id = ?").bind(id).run();
+    await env.DB.prepare("DELETE FROM ssl_certs WHERE domain_id = ?").bind(id).run();
+    await env.DB.prepare("DELETE FROM record_remarks WHERE domain_id = ?").bind(id).run();
+    await env.DB.prepare("DELETE FROM user_favorites WHERE domain_id = ?").bind(id).run();
+    await env.DB.prepare("DELETE FROM domains WHERE id = ?").bind(id).run();
+  }
+}
+
+/** 获取某域名下所有记录的备注，返回 { [recordId]: remark } 映射，方便合并进 provider 返回的记录列表 */
+export async function getRecordRemarks(env: Env, domainId: number): Promise<Record<string, string>> {
+  const { results } = await env.DB.prepare("SELECT record_id, remark FROM record_remarks WHERE domain_id = ?")
+    .bind(domainId)
+    .all<{ record_id: string; remark: string }>();
+  const map: Record<string, string> = {};
+  for (const row of results) map[row.record_id] = row.remark;
+  return map;
+}
+
+export async function setRecordRemark(env: Env, domainId: number, recordId: string, remark: string) {
+  return env.DB.prepare(
+    `INSERT INTO record_remarks (domain_id, record_id, remark, updated_at) VALUES (?,?,?,?)
+     ON CONFLICT(domain_id, record_id) DO UPDATE SET remark = excluded.remark, updated_at = excluded.updated_at`
+  )
+    .bind(domainId, recordId, remark, now())
     .run();
 }
