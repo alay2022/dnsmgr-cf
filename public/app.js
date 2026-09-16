@@ -898,10 +898,16 @@ function showResetPasswordModal(userId, username) {
 
 /** 授权域名弹窗：所有域名以勾选框形式列出，勾选=授权，每个勾选项旁可选只读/读写 */
 async function showDomainPermModal(userId, username) {
-  const [domains, currentPerms] = await Promise.all([
-    api("/domains"),
-    api(`/users/${userId}/domain-perms`),
-  ]);
+  let domains, currentPerms;
+  try {
+    [domains, currentPerms] = await Promise.all([
+      api("/domains"),
+      api(`/users/${userId}/domain-perms`),
+    ]);
+  } catch (e) {
+    toast(`加载失败: ${e.message}`, "error");
+    return;
+  }
   const permMap = {};
   currentPerms.forEach((p) => (permMap[p.domain_id] = p.perm));
 
