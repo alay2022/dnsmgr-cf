@@ -142,5 +142,19 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
+/* 解析记录表格：值列限宽，超出用省略号，悬停(title)看完整值，给后面的列腾出空间 */
+.record-table td, .record-table th { padding: 6px 8px; }
+.record-table .value-cell {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 收藏星标 */
+.fav-icon { color: #cbd5e1; transition: color .15s ease; vertical-align: middle; }
+.fav-icon.active { color: #f59e0b; }
+.favStar:hover .fav-icon { color: #f59e0b; }
+
 .favStar { color: #c9cdd4; font-size: 15px; }
 .favStar.active { color: #ff9a2e; }

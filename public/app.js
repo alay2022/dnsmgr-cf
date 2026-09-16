@@ -193,11 +193,11 @@ let dragSrcId = null;
 async function renderDomainList(main) {
   main.innerHTML = `<div class="card">
     <h3>域名列表 <span style="font-weight:400;font-size:12px;color:var(--muted)">拖动左侧 ⠿ 图标调整顺序，会同步到「域名解析记录」页面上方下拉框的排列顺序</span></h3>
-    <div style="margin-bottom:10px">
+    <div id="domainListTable">加载中...</div>
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
       <label><input type="checkbox" id="selectAllDomains" /> 全选</label>
       <button class="danger" id="batchDeleteDomainsBtn">批量删除</button>
     </div>
-    <div id="domainListTable">加载中...</div>
   </div>`;
 
   const domains = await api("/domains");
@@ -225,34 +225,56 @@ async function renderDomainList(main) {
 function renderDomainListTable(domains) {
   const container = document.getElementById("domainListTable");
   const favIds = new Set(state.favorites.map((f) => f.id));
+  const starSvg = (filled) => `
+    <svg class="fav-icon ${filled ? "active" : ""}" viewBox="0 0 24 24" width="22" height="22"
+         fill="${filled ? "currentColor" : "none"}" stroke="currentColor" stroke-width="1.8"
+         stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+    </svg>`;
+
   container.innerHTML = domains.length
     ? `<table id="domainSortTable">
-        <tr><th></th><th></th><th></th><th>域名</th><th>平台</th><th>状态</th></tr>
+        <tr><th></th><th></th><th></th><th>域名</th><th>平台</th><th>状态</th><th>操作</th></tr>
         ${domains
           .map(
             (d) => `<tr draggable="true" data-id="${d.id}" class="domainDragRow">
               <td style="cursor:grab;width:24px">⠿</td>
               <td style="width:24px"><input type="checkbox" class="domainRowCheck" data-id="${d.id}" /></td>
-              <td style="width:24px"><span class="favStar ${favIds.has(d.id) ? "active" : ""}" data-id="${d.id}" style="cursor:pointer">${favIds.has(d.id) ? "★" : "☆"}</span></td>
+              <td style="width:32px"><span class="favStar" data-id="${d.id}" title="收藏/取消收藏" style="cursor:pointer;display:inline-flex">${starSvg(favIds.has(d.id))}</span></td>
               <td>${d.domain_name}</td>
               <td>${d.provider_type}</td>
               <td>${d.status}</td>
+              <td><button class="danger delDomain" data-id="${d.id}" data-name="${d.domain_name}">删除</button></td>
             </tr>`
           )
           .join("")}
       </table>`
     : `<p>暂无域名，请先在「解析平台账号」中添加账号并导入域名。</p>`;
 
+  container.querySelectorAll(".delDomain").forEach(
+    (btn) => (btn.onclick = async () => {
+      if (!confirm(`确认删除域名「${btn.dataset.name}」？会同时清除相关的权限、证书、备注记录，且不可恢复。\n\n注意：这只是把域名移出本系统管理，不会影响该域名在解析平台上的实际解析记录。`)) return;
+      try {
+        await api("/domains/batch-delete", { method: "POST", body: { domainIds: [Number(btn.dataset.id)] } });
+        toast("已删除", "success");
+        renderDomainList(document.getElementById("main"));
+      } catch (e) {
+        toast(e.message, "error");
+      }
+    })
+  );
+
   container.querySelectorAll(".favStar").forEach(
     (star) => (star.onclick = async () => {
       const domainId = Number(star.dataset.id);
-      const isFav = star.classList.contains("active");
+      const icon = star.querySelector(".fav-icon");
+      const isFav = icon.classList.contains("active");
       try {
         await api(`/domains/${domainId}/favorite`, { method: "PUT", body: { favorite: !isFav } });
-        star.classList.toggle("active");
-        star.textContent = isFav ? "☆" : "★";
+        star.innerHTML = starSvg(!isFav);
         if (isFav) state.favorites = state.favorites.filter((f) => f.id !== domainId);
         else state.favorites.push({ id: domainId, domain_name: domains.find((d) => d.id === domainId)?.domain_name });
+        renderShell();
       } catch (e) {
         toast(e.message, "error");
       }
@@ -363,26 +385,35 @@ async function loadRecords(domainId) {
   listEl.innerHTML = "加载中...";
   try {
     const records = await api(`/domains/${domainId}/records`);
+    const cloudIcon = (proxied) => `
+      <svg viewBox="0 0 24 24" width="20" height="20" title="${proxied ? "已代理" : "仅DNS"}"
+           fill="${proxied ? "#f6821f" : "none"}" stroke="${proxied ? "#f6821f" : "#94a3b8"}" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle">
+        <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
+      </svg>`;
+
     listEl.innerHTML = records.length
-      ? `<div style="margin-bottom:8px">
-          <label><input type="checkbox" id="selectAllRecords" /> 全选</label>
-          <button class="danger" id="batchDeleteRecordsBtn">批量删除</button>
-        </div>
-        <table>
+      ? `<table class="record-table">
           <tr><th></th><th>主机记录</th><th>类型</th><th>值</th><th>TTL</th>${isCloudflare ? "<th>代理</th>" : ""}<th>备注</th><th>操作</th></tr>
           ${records
             .map(
               (r) => `<tr>
-                <td><input type="checkbox" class="recordRowCheck" data-id="${r.id}" /></td>
-                <td>${r.rr}</td><td>${r.type}</td><td>${r.value}</td><td>${r.ttl}</td>
-                ${isCloudflare ? `<td>${r.proxied ? "已代理" : "仅DNS"}</td>` : ""}
-                <td><input class="remarkInput" data-id="${r.id}" value="${r.remark || ""}" placeholder="点击填写备注" style="width:120px;font-size:12px" /></td>
-                <td><button class="secondary editRecord" data-record='${JSON.stringify(r).replace(/'/g, "&apos;")}'>修改</button>
+                <td style="width:24px"><input type="checkbox" class="recordRowCheck" data-id="${r.id}" /></td>
+                <td>${r.rr}</td><td>${r.type}</td>
+                <td class="value-cell" title="${String(r.value).replace(/"/g, "&quot;")}">${r.value}</td>
+                <td>${r.ttl}</td>
+                ${isCloudflare ? `<td style="width:36px;text-align:center">${cloudIcon(r.proxied)}</td>` : ""}
+                <td><input class="remarkInput" data-id="${r.id}" value="${(r.remark || "").replace(/"/g, "&quot;")}" placeholder="备注" style="width:100px;font-size:12px" /></td>
+                <td style="white-space:nowrap"><button class="secondary editRecord" data-record='${JSON.stringify(r).replace(/'/g, "&apos;")}'>修改</button>
                     <button class="danger delRecord" data-id="${r.id}">删除</button></td>
               </tr>`
             )
             .join("")}
-        </table>`
+        </table>
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+          <label><input type="checkbox" id="selectAllRecords" /> 全选</label>
+          <button class="danger" id="batchDeleteRecordsBtn">批量删除</button>
+        </div>`
       : `<p>暂无解析记录</p>`;
 
     if (!records.length) return;
@@ -622,7 +653,7 @@ async function showDiscoverDomainsModal(providerId) {
       ? `<div style="max-height:50vh;overflow:auto"><table><tr><th></th><th>域名</th><th>状态</th></tr>${domains
           .map(
             (d) => `<tr>
-              <td><input type="checkbox" class="discoverCheck" value="${d.domainName}" ${d.imported ? "checked" : ""} /></td>
+              <td><input type="checkbox" class="discoverCheck" value="${d.domainName}" data-imported="${d.imported ? "1" : "0"}" ${d.imported ? "checked" : ""} /></td>
               <td>${d.domainName}</td>
               <td>${d.imported ? "已导入" : "未导入"}</td>
             </tr>`
@@ -634,11 +665,30 @@ async function showDiscoverDomainsModal(providerId) {
   }
 
   document.getElementById("importDomainsBtn").onclick = async () => {
-    const domainNames = [...overlay.querySelectorAll(".discoverCheck:checked")].map((cb) => cb.value);
-    if (!domainNames.length) return toast("请至少勾选一个域名", "error");
+    const allChecks = [...overlay.querySelectorAll(".discoverCheck")];
+    const domainNames = allChecks.filter((cb) => cb.checked).map((cb) => cb.value);
+    const allDomainNames = allChecks.map((cb) => cb.value);
+
+    // 原本已导入、这次被取消勾选的，会从系统里移除，先明确告知
+    const willRemove = allChecks
+      .filter((cb) => !cb.checked && cb.dataset.imported === "1")
+      .map((cb) => cb.value);
+    if (willRemove.length) {
+      const ok = confirm(
+        `以下 ${willRemove.length} 个域名已取消勾选，保存后会从本系统中移除（同时清除它们的权限、证书、备注、收藏记录）：\n\n${willRemove.join("\n")}\n\n注意：移除只是不再由本系统管理，不会影响这些域名在解析平台上的实际解析记录。\n\n确认继续吗？`
+      );
+      if (!ok) return;
+    }
+
     try {
-      const r = await api(`/providers/${providerId}/import-domains`, { method: "POST", body: { domainNames } });
-      toast(`已导入 ${r.imported} 个域名`, "success");
+      const r = await api(`/providers/${providerId}/import-domains`, {
+        method: "POST",
+        body: { domainNames, allDomainNames },
+      });
+      const parts = [];
+      if (r.imported) parts.push(`导入/更新 ${r.imported} 个`);
+      if (r.removed) parts.push(`移除 ${r.removed} 个`);
+      toast(parts.length ? `已${parts.join("，")}域名` : "没有变化", "success");
       overlay.remove();
     } catch (e) {
       toast(e.message, "error");
@@ -660,10 +710,12 @@ async function renderSsl(main) {
       <h3>证书列表</h3>
       <div style="margin-bottom:10px">
         筛选域名：<select id="certFilterDomain"><option value="">全部域名</option></select>
-        <label style="margin-left:12px"><input type="checkbox" id="selectAllCerts" /> 全选</label>
-        <button class="danger" id="batchDeleteCertsBtn">批量删除</button>
       </div>
       <div id="certList">加载中...</div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <label><input type="checkbox" id="selectAllCerts" /> 全选</label>
+        <button class="danger" id="batchDeleteCertsBtn">批量删除</button>
+      </div>
     </div>`;
 
   const domains = await api("/domains");
@@ -684,11 +736,11 @@ async function renderSsl(main) {
               <td>${c.domain_name || ""}</td>
               <td>${c.common_name}</td><td><span class="tag ${c.status}">${c.status}</span></td>
               <td>${c.expires_at ? new Date(c.expires_at * 1000).toLocaleDateString() : "-"}</td>
-              <td>${
+              <td style="white-space:nowrap">${
                 c.status === "issued"
-                  ? `<button class="view secondary" data-id="${c.id}" data-domain="${c.domain_id}">查看</button> <button class="dl" data-id="${c.id}" data-domain="${c.domain_id}">下载</button> <button class="renew secondary" data-id="${c.id}" data-domain="${c.domain_id}">续签</button>`
+                  ? `<button class="view secondary" data-id="${c.id}" data-domain="${c.domain_id}">查看</button> <button class="dl" data-id="${c.id}" data-domain="${c.domain_id}">下载</button> <button class="renew secondary" data-id="${c.id}" data-domain="${c.domain_id}">续签</button> `
                   : ""
-              }</td></tr>`
+              }<button class="danger delCert" data-id="${c.id}" data-cn="${c.common_name}">删除</button></td></tr>`
           )
           .join("")}</table>`
       : `<p>暂无证书</p>`;
@@ -696,6 +748,19 @@ async function renderSsl(main) {
     document.getElementById("selectAllCerts").onchange = (e) => {
       certListEl.querySelectorAll(".certRowCheck").forEach((cb) => (cb.checked = e.target.checked));
     };
+
+    certListEl.querySelectorAll(".delCert").forEach(
+      (btn) => (btn.onclick = async () => {
+        if (!confirm(`确认删除证书「${btn.dataset.cn}」的记录？\n\n注意：这只是删除本系统里保存的证书记录，不会向CA吊销该证书。如果已经把证书部署到了服务器上，它仍然有效。`)) return;
+        try {
+          await api("/domains/certs/batch-delete", { method: "POST", body: { certIds: [Number(btn.dataset.id)] } });
+          toast("已删除", "success");
+          loadCertList();
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      })
+    );
 
     certListEl.querySelectorAll(".view").forEach(
       (btn) => (btn.onclick = async () => {

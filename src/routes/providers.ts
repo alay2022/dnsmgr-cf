@@ -3,7 +3,7 @@ import type { Env, JwtPayload } from "../types";
 import { requireAuth, requireAdmin } from "../middleware/auth";
 import { aesEncrypt } from "../utils/crypto";
 import { SUPPORTED_PROVIDER_TYPES, createProviderInstance } from "../providers/registry";
-import { now } from "../db";
+import { now, batchDeleteDomains } from "../db";
 
 export const providerRoutes = new Hono<{ Bindings: Env }>();
 providerRoutes.use("*", requireAuth, requireAdmin);
@@ -79,15 +79,41 @@ providerRoutes.post("/:id/discover-domains", async (c) => {
 });
 
 /** 把勾选的域名导入到本地管理：body: { domainNames: string[] } */
+/**
+ * 同步"发现域名"弹窗里的勾选状态：
+ * - 勾选但系统里还没有的 → 导入
+ * - 没勾选但系统里已存在的 → 从系统中移除（同时清理该域名的权限/证书/收藏/备注）
+ * 注意：移除只是把域名移出本系统管理，不会影响该域名在解析平台上的实际解析记录。
+ */
 providerRoutes.post("/:id/import-domains", async (c) => {
   const id = Number(c.req.param("id"));
-  const { domainNames } = await c.req.json<{ domainNames: string[] }>();
-  if (!Array.isArray(domainNames) || !domainNames.length) return c.json({ error: "请至少选择一个域名" }, 400);
+  const { domainNames, allDomainNames } = await c.req.json<{ domainNames: string[]; allDomainNames?: string[] }>();
+  if (!Array.isArray(domainNames)) return c.json({ error: "参数格式不正确" }, 400);
 
   const row = await c.env.DB.prepare("SELECT * FROM dns_providers WHERE id = ?").bind(id).first();
   if (!row) return c.json({ error: "账号不存在" }, 404);
 
-  // 导入的域名排在当前最大 sort_order 之后
+  const selected = new Set(domainNames);
+
+  // 先处理"取消勾选"的：在该平台账号下、本次发现列表里出现过、但没被勾选的，从系统中移除
+  let removed = 0;
+  if (Array.isArray(allDomainNames) && allDomainNames.length) {
+    const { results: existing } = await c.env.DB.prepare(
+      `SELECT id, domain_name FROM domains WHERE provider_id = ?`
+    )
+      .bind(id)
+      .all<{ id: number; domain_name: string }>();
+
+    const toRemove = (existing as any[]).filter(
+      (d) => allDomainNames.includes(d.domain_name) && !selected.has(d.domain_name)
+    );
+    if (toRemove.length) {
+      await batchDeleteDomains(c.env, toRemove.map((d) => d.id));
+      removed = toRemove.length;
+    }
+  }
+
+  // 再处理"勾选"的：导入或更新
   const maxRow = await c.env.DB.prepare("SELECT MAX(sort_order) as maxOrder FROM domains").first<{ maxOrder: number | null }>();
   let nextOrder = (maxRow?.maxOrder ?? 0) + 1;
 
@@ -101,5 +127,5 @@ providerRoutes.post("/:id/import-domains", async (c) => {
       .bind(id, domainName, "active", nextOrder++, ts, ts)
       .run();
   }
-  return c.json({ ok: true, imported: domainNames.length });
+  return c.json({ ok: true, imported: domainNames.length, removed });
 });
