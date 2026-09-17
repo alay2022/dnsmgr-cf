@@ -145,7 +145,7 @@ async function renderLogin() {
 // ---------------- 主框架 ----------------
 const NAV = [
   { key: "overview", label: "概览" },
-  { key: "domainList", label: "域名列表", adminOnly: true },
+  { key: "domainList", label: "域名列表" },
   { key: "domains", label: "域名解析记录" },
   { key: "providers", label: "解析平台账号" },
   { key: "ssl", label: "SSL 证书" },

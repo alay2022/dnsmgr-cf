@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env, JwtPayload } from "../types";
-import { requireAuth, requireAdmin } from "../middleware/auth";
+import { requireAuth } from "../middleware/auth";
 import { listDomainsForUser, reorderDomains, batchDeleteDomains, insertAuditLog, now, userHasDomainPerm } from "../db";
 import { lookupWhois } from "../utils/whois";
 
@@ -26,22 +26,36 @@ domainRoutes.get("/", async (c) => {
   return c.json(domains);
 });
 
-/** 拖拽排序后保存新顺序：body: { orderedIds: number[] } */
-domainRoutes.put("/reorder", requireAdmin, async (c) => {
+/** 拖拽排序后保存新顺序：body: { orderedIds: number[] }（非管理员只能对自己有权限的域名生效，其余会被忽略） */
+domainRoutes.put("/reorder", async (c) => {
+  const user = c.get("user") as JwtPayload;
   const { orderedIds } = await c.req.json<{ orderedIds: number[] }>();
   if (!Array.isArray(orderedIds) || !orderedIds.length) return c.json({ error: "参数不能为空" }, 400);
-  await reorderDomains(c.env, orderedIds);
+
+  let allowedIds = orderedIds;
+  if (user.role !== "admin") {
+    const checks = await Promise.all(orderedIds.map((id) => userHasDomainPerm(c.env, user.uid, id, false)));
+    allowedIds = orderedIds.filter((_, i) => checks[i]);
+  }
+  await reorderDomains(c.env, allowedIds);
   return c.json({ ok: true });
 });
 
-/** 批量删除域名：body: { domainIds: number[] } */
-domainRoutes.post("/batch-delete", requireAdmin, async (c) => {
+/** 批量删除域名：body: { domainIds: number[] }（非管理员只能删除自己有读写权限的域名） */
+domainRoutes.post("/batch-delete", async (c) => {
   const user = c.get("user") as JwtPayload;
   const { domainIds } = await c.req.json<{ domainIds: number[] }>();
   if (!Array.isArray(domainIds) || !domainIds.length) return c.json({ error: "参数不能为空" }, 400);
-  await batchDeleteDomains(c.env, domainIds);
-  await insertAuditLog(c.env, user.uid, "batch_delete_domains", domainIds.join(","));
-  return c.json({ ok: true, deleted: domainIds.length });
+
+  let allowedIds = domainIds;
+  if (user.role !== "admin") {
+    const checks = await Promise.all(domainIds.map((id) => userHasDomainPerm(c.env, user.uid, id, true)));
+    allowedIds = domainIds.filter((_, i) => checks[i]);
+    if (!allowedIds.length) return c.json({ error: "没有权限删除所选域名" }, 403);
+  }
+  await batchDeleteDomains(c.env, allowedIds);
+  await insertAuditLog(c.env, user.uid, "batch_delete_domains", allowedIds.join(","));
+  return c.json({ ok: true, deleted: allowedIds.length });
 });
 
 /** 当前用户收藏的域名列表，供左侧栏快捷访问 */

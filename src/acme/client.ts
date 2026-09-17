@@ -156,7 +156,7 @@ export class AcmeClient {
           rr: sub,
           type: "TXT",
           value: `"${txtValue}"`,
-          ttl: 60,
+          ttl: 600, // 部分平台（如阿里云）要求TTL最小值600秒，这里统一用600确保兼容
         });
         createdTxtRecordIds.push(recordId);
 
