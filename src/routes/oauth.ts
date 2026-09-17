@@ -143,7 +143,7 @@ oauthRoutes.get("/:provider/callback", async (c) => {
 
     // 不同平台的用户ID/用户名字段不一样，做个归一化
     const providerUserId = String(profile.id ?? profile.sub ?? profile.user_id ?? "");
-    const providerUsername = profile.login ?? profile.name ?? profile.email ?? providerUserId;
+    const providerUsername = profile.username ?? profile.login ?? profile.name ?? profile.email ?? providerUserId;
     if (!providerUserId) throw new Error("无法从第三方平台获取用户ID");
 
     if (statePayload.mode === "link") {
