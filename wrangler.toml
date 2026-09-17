@@ -8,9 +8,13 @@ binding = "DB"
 database_name = "dnsmgr"
 database_id = "365fc304-9ece-42f7-8adf-d65fe4d74deb"
 
-# 注意：证书签发/续签已经搬到 GitHub Actions 里跑（见 .github/workflows/），
-# 本项目不再使用 Workers 自己的 Cron Trigger，所以这里没有 [triggers] 配置了。
+# 证书签发/续签本身已经搬到 GitHub Actions 里跑（见 .github/workflows/），
 # 续签检查由 .github/workflows/renew-certs.yml 的 schedule 触发。
+# 这里的 Cron Trigger 只用于「域名/证书到期提醒通知」，是轻量任务（只查数据库+发通知，
+# 没有ACME签名运算），放在 Workers 里跑没有CPU限制问题。
+# 0 0 * * * = 每天 UTC 00:00 = 北京时间每天 08:00
+[triggers]
+crons = ["0 0 * * *"]
 
 [vars]
 # 非敏感配置，敏感项请用 `wrangler secret put` 设置：
@@ -26,3 +30,14 @@ GITHUB_REF = "main"
 # 可选：如遇到 Cloudflare Workers 访问 Let's Encrypt 的已知525问题（见README「已知问题」），
 # 取消下面这行注释切换到 ZeroSSL（免费，但需要额外配置EAB凭据，见README说明）：
 # ACME_DIRECTORY_URL = "https://acme.zerossl.com/v2/DV90"
+
+# 可选：第三方登录（GitHub/Google/NodeLoc），不配置就不会显示对应的登录按钮。
+# Client ID 不是敏感信息可以放这里，Client Secret 必须用 wrangler secret put 设置。
+# OAUTH_REDIRECT_BASE = "https://dnsmgr-cf.alay.workers.dev"
+# FRONTEND_BASE = "https://dns.ztvps.com"
+# GITHUB_OAUTH_CLIENT_ID = ""
+# GOOGLE_OAUTH_CLIENT_ID = ""
+# NODELOC_OAUTH_CLIENT_ID = ""
+# NODELOC_OAUTH_AUTHORIZE_URL = ""
+# NODELOC_OAUTH_TOKEN_URL = ""
+# NODELOC_OAUTH_USERINFO_URL = ""

@@ -23,13 +23,11 @@ overviewRoutes.get("/", async (c) => {
     : { cnt: null };
 
   const certStatsRows = await c.env.DB.prepare(
-    `SELECT sc.status, COUNT(*) as cnt FROM ssl_certs sc
+    `SELECT COUNT(*) as cnt FROM ssl_certs sc
      JOIN domains d ON d.id = sc.domain_id
-     WHERE ${domainScope}
-     GROUP BY sc.status`
-  ).all<{ status: string; cnt: number }>();
-  const certStats: Record<string, number> = { issued: 0, pending: 0, failed: 0 };
-  for (const row of certStatsRows.results) certStats[row.status] = row.cnt;
+     WHERE sc.status = 'issued' AND (${domainScope})`
+  ).first<{ cnt: number }>();
+  const certStats = { issued: certStatsRows?.cnt ?? 0 };
 
   const ts = now();
   const expiringSoon = await c.env.DB.prepare(
@@ -37,6 +35,14 @@ overviewRoutes.get("/", async (c) => {
      JOIN domains d ON d.id = sc.domain_id
      WHERE sc.status = 'issued' AND sc.expires_at < ? AND (${domainScope})
      ORDER BY sc.expires_at ASC LIMIT 10`
+  )
+    .bind(ts + 20 * 24 * 3600)
+    .all();
+
+  const domainsExpiringSoon = await c.env.DB.prepare(
+    `SELECT d.id, d.domain_name, d.whois_expires_at FROM domains d
+     WHERE d.whois_expires_at IS NOT NULL AND d.whois_expires_at < ? AND (${domainScope})
+     ORDER BY d.whois_expires_at ASC LIMIT 10`
   )
     .bind(ts + 20 * 24 * 3600)
     .all();
@@ -61,6 +67,7 @@ overviewRoutes.get("/", async (c) => {
     userCount: userCountRow?.cnt ?? null,
     certStats,
     expiringSoon: expiringSoon.results,
+    domainsExpiringSoon: domainsExpiringSoon.results,
     recentActivity,
   });
 });

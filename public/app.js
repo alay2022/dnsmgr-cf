@@ -1,4 +1,33 @@
 const API = window.API_BASE || "";
+
+/** 格式化域名到期时间，20天内标记为快到期(红色) */
+function formatDomainExpiry(whoisExpiresAt) {
+  if (!whoisExpiresAt) return { text: "未查询", soon: false };
+  const daysLeft = Math.ceil((whoisExpiresAt * 1000 - Date.now()) / 86400000);
+  const dateStr = new Date(whoisExpiresAt * 1000).toLocaleDateString();
+  if (daysLeft < 0) return { text: `${dateStr}（已过期）`, soon: true };
+  return { text: `${dateStr}（${daysLeft}天后）`, soon: daysLeft <= 20 };
+}
+
+/** 生成一个可点击切换的云朵图标开关（用于Cloudflare代理开关），data-checked记录状态 */
+function cloudToggleHtml(id, checked, label) {
+  return `<span class="cloud-toggle ${checked ? "on" : ""}" id="${id}" data-checked="${checked}" title="点击切换：${label}">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" stroke="none">
+      <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
+    </svg>
+    <span style="font-size:13px">${label}</span>
+  </span>`;
+}
+/** 绑定 cloudToggleHtml 生成的开关的点击事件，需在插入DOM后调用 */
+function bindCloudToggle(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.onclick = () => {
+    const nowChecked = el.dataset.checked !== "true";
+    el.dataset.checked = String(nowChecked);
+    el.classList.toggle("on", nowChecked);
+  };
+}
 let state = {
   token: localStorage.getItem("dnsmgr_token") || "",
   user: JSON.parse(localStorage.getItem("dnsmgr_user") || "null"),
@@ -37,6 +66,8 @@ function saveSession(token, user) {
   state.user = user;
   localStorage.setItem("dnsmgr_token", token);
   localStorage.setItem("dnsmgr_user", JSON.stringify(user));
+  // 普通用户更关心自己的域名，登录后直接落地到「域名解析记录」页；管理员保留概览页
+  state.page = user.role === "admin" ? "overview" : "domains";
 }
 function logout() {
   state.token = "";
@@ -46,7 +77,7 @@ function logout() {
   render();
 }
 
-// ---------------- 处理「登录直达链接」跳转 ----------------
+// ---------------- 处理「登录直达链接」跳转 & OAuth回调提示 ----------------
 (function handleDirectLogin() {
   const params = new URLSearchParams(location.search);
   const token = params.get("token");
@@ -55,10 +86,24 @@ function logout() {
     state.token = token;
     history.replaceState({}, "", "/");
   }
+  const oauthError = params.get("oauth_error");
+  const oauthLinked = params.get("oauth_linked");
+  if (oauthError === "not_linked") {
+    setTimeout(() => toast(`该${OAUTH_LABELS[params.get("provider")] || "第三方"}账号还没绑定过，请先用密码登录，再去个人设置里绑定`, "error"), 300);
+    history.replaceState({}, "", "/");
+  } else if (oauthError) {
+    setTimeout(() => toast(`第三方登录失败：${oauthError}`, "error"), 300);
+    history.replaceState({}, "", "/");
+  } else if (oauthLinked) {
+    setTimeout(() => toast(`${OAUTH_LABELS[oauthLinked] || oauthLinked} 绑定成功`, "success"), 300);
+    history.replaceState({}, "", "/");
+  }
 })();
 
+const OAUTH_LABELS = { github: "GitHub", google: "Google", nodeloc: "NodeLoc" };
+
 // ---------------- 登录页 ----------------
-function renderLogin() {
+async function renderLogin() {
   const app = document.getElementById("app");
   app.innerHTML = `
     <div class="login-wrap">
@@ -67,6 +112,7 @@ function renderLogin() {
         <input id="username" placeholder="用户名" value="admin" />
         <input id="password" type="password" placeholder="密码" value="admin" />
         <button id="loginBtn">登录</button>
+        <div id="oauthButtons" style="margin-top:12px"></div>
       </div>
     </div>`;
   document.getElementById("loginBtn").onclick = async () => {
@@ -81,6 +127,19 @@ function renderLogin() {
       toast(e.message, "error");
     }
   };
+
+  try {
+    const { available } = await api("/oauth/providers");
+    if (available.length) {
+      document.getElementById("oauthButtons").innerHTML =
+        `<div style="text-align:center;color:var(--muted);font-size:12px;margin:10px 0">或使用以下方式登录</div>` +
+        available
+          .map((p) => `<button class="secondary" style="width:100%;margin-top:6px" onclick="location.href='${API}/api/oauth/${p}/start?mode=login'">使用 ${OAUTH_LABELS[p]} 登录</button>`)
+          .join("");
+    }
+  } catch {
+    /* 拿不到就不显示第三方登录按钮，不影响正常密码登录 */
+  }
 }
 
 // ---------------- 主框架 ----------------
@@ -115,7 +174,7 @@ async function renderShell() {
   app.innerHTML = `
     <div class="sidebar">
       <h1>DNSMGR-CF</h1>
-      <nav>${navHtml}${favHtml}<a id="logoutLink">退出登录 (${state.user.username})</a></nav>
+      <nav>${navHtml}${favHtml}<a id="accountSettingsLink">账号设置</a><a id="logoutLink">退出登录 (${state.user.username})</a></nav>
     </div>
     <div class="main" id="main"></div>`;
   app.querySelectorAll("[data-page]").forEach((a) => (a.onclick = () => { state.page = a.dataset.page; render(); }));
@@ -126,8 +185,84 @@ async function renderShell() {
       render();
     })
   );
+  document.getElementById("accountSettingsLink").onclick = showAccountSettingsModal;
   document.getElementById("logoutLink").onclick = logout;
   renderPage();
+}
+
+/** 账号设置弹窗：修改自己的密码 + 绑定/解绑第三方登录 */
+async function showAccountSettingsModal() {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box" style="width:420px">
+      <h3>账号设置</h3>
+      <label>修改自己的密码</label>
+      <input id="oldPwd" type="password" placeholder="原密码" style="width:100%;margin-bottom:4px" />
+      <input id="newSelfPwd" type="password" placeholder="新密码（至少6位）" style="width:100%" />
+      <button id="changeSelfPwdBtn" style="margin-top:6px">修改密码</button>
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+        <label>第三方登录绑定</label>
+        <div id="oauthLinksList">加载中...</div>
+      </div>
+      <div class="modal-actions">
+        <button class="secondary" id="closeAccountSettingsBtn">关闭</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById("closeAccountSettingsBtn").onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  document.getElementById("changeSelfPwdBtn").onclick = async () => {
+    try {
+      await api("/auth/change-password", {
+        method: "POST",
+        body: { oldPassword: document.getElementById("oldPwd").value, newPassword: document.getElementById("newSelfPwd").value },
+      });
+      toast("密码修改成功", "success");
+      overlay.remove();
+    } catch (e) {
+      toast(e.message, "error");
+    }
+  };
+
+  try {
+    const [{ available }, links] = await Promise.all([api("/oauth/providers"), api("/oauth/links")]);
+    const linkedProviders = new Set(links.map((l) => l.provider));
+    document.getElementById("oauthLinksList").innerHTML = available.length
+      ? available
+          .map((p) => {
+            const linked = linkedProviders.has(p);
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0">
+              <span>${OAUTH_LABELS[p]}${linked ? ` <span style="color:var(--success);font-size:12px">已绑定</span>` : ""}</span>
+              ${
+                linked
+                  ? `<button class="danger unlinkOauth" data-provider="${p}" style="padding:4px 10px;font-size:12px">解绑</button>`
+                  : `<button class="secondary linkOauth" data-provider="${p}" style="padding:4px 10px;font-size:12px">绑定</button>`
+              }
+            </div>`;
+          })
+          .join("")
+      : `<p style="color:var(--muted);font-size:13px">管理员还没有配置任何第三方登录方式</p>`;
+
+    overlay.querySelectorAll(".linkOauth").forEach(
+      (btn) => (btn.onclick = () => { location.href = `${API}/api/oauth/${btn.dataset.provider}/start?mode=link&token=${state.token}`; })
+    );
+    overlay.querySelectorAll(".unlinkOauth").forEach(
+      (btn) => (btn.onclick = async () => {
+        try {
+          await api(`/oauth/links/${btn.dataset.provider}`, { method: "DELETE" });
+          toast("已解绑", "success");
+          overlay.remove();
+          showAccountSettingsModal();
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      })
+    );
+  } catch (e) {
+    document.getElementById("oauthLinksList").innerHTML = `<p style="color:red">${e.message}</p>`;
+  }
 }
 
 function renderPage() {
@@ -158,9 +293,17 @@ async function renderOverview(main) {
         <div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:13px">域名总数</div><div style="font-size:28px;font-weight:600">${data.domainCount}</div></div>
         ${data.providerCount !== null ? `<div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:13px">解析平台账号</div><div style="font-size:28px;font-weight:600">${data.providerCount}</div></div>` : ""}
         <div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:13px">已签发证书</div><div style="font-size:28px;font-weight:600;color:var(--success)">${data.certStats.issued || 0}</div></div>
-        <div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:13px">签发中</div><div style="font-size:28px;font-weight:600;color:#854d0e">${data.certStats.pending || 0}</div></div>
-        <div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:13px">签发失败</div><div style="font-size:28px;font-weight:600;color:var(--danger)">${data.certStats.failed || 0}</div></div>
         ${data.userCount !== null ? `<div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:13px">用户数</div><div style="font-size:28px;font-weight:600">${data.userCount}</div></div>` : ""}
+      </div>
+      <div class="card">
+        <h3>20天内到期的域名</h3>
+        ${
+          data.domainsExpiringSoon.length
+            ? `<table><tr><th>域名</th><th>到期时间</th></tr>${data.domainsExpiringSoon
+                .map((d) => `<tr><td>${d.domain_name}</td><td style="color:var(--danger)">${new Date(d.whois_expires_at * 1000).toLocaleDateString()}</td></tr>`)
+                .join("")}</table>`
+            : `<p style="color:var(--muted)">暂无即将到期的域名（需要先在「域名列表」页查询过到期时间才会显示在这里）</p>`
+        }
       </div>
       <div class="card">
         <h3>20天内到期的证书</h3>
@@ -193,6 +336,7 @@ let dragSrcId = null;
 async function renderDomainList(main) {
   main.innerHTML = `<div class="card">
     <h3>域名列表 <span style="font-weight:400;font-size:12px;color:var(--muted)">拖动左侧 ⠿ 图标调整顺序，会同步到「域名解析记录」页面上方下拉框的排列顺序</span></h3>
+    <div style="margin-bottom:10px">按解析平台筛选：<select id="domainListProviderFilter"><option value="">全部平台账号</option></select></div>
     <div id="domainListTable">加载中...</div>
     <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
       <label><input type="checkbox" id="selectAllDomains" /> 全选</label>
@@ -200,9 +344,19 @@ async function renderDomainList(main) {
     </div>
   </div>`;
 
-  const domains = await api("/domains");
-  state.domains = domains;
-  renderDomainListTable(domains);
+  const providers = await api("/providers");
+  const providerFilter = document.getElementById("domainListProviderFilter");
+  providerFilter.innerHTML +=
+    providers.map((p) => `<option value="${p.id}">${p.name}（${p.type}）</option>`).join("");
+
+  const load = async () => {
+    const providerId = providerFilter.value;
+    const domains = await api(providerId ? `/domains?providerId=${providerId}` : "/domains");
+    state.domains = domains;
+    renderDomainListTable(domains);
+  };
+  providerFilter.onchange = load;
+  await load();
 
   document.getElementById("selectAllDomains").onchange = (e) => {
     document.querySelectorAll(".domainRowCheck").forEach((cb) => (cb.checked = e.target.checked));
@@ -234,22 +388,49 @@ function renderDomainListTable(domains) {
 
   container.innerHTML = domains.length
     ? `<table id="domainSortTable">
-        <tr><th></th><th></th><th></th><th>域名</th><th>平台</th><th>状态</th><th>操作</th></tr>
+        <tr><th></th><th></th><th></th><th>域名</th><th>平台</th><th>状态</th><th>注册到期时间</th><th>操作</th></tr>
         ${domains
-          .map(
-            (d) => `<tr draggable="true" data-id="${d.id}" class="domainDragRow">
+          .map((d) => {
+            const expiresText = formatDomainExpiry(d.whois_expires_at);
+            return `<tr draggable="true" data-id="${d.id}" class="domainDragRow">
               <td style="cursor:grab;width:24px">⠿</td>
               <td style="width:24px"><input type="checkbox" class="domainRowCheck" data-id="${d.id}" /></td>
               <td style="width:32px"><span class="favStar" data-id="${d.id}" title="收藏/取消收藏" style="cursor:pointer;display:inline-flex">${starSvg(favIds.has(d.id))}</span></td>
               <td>${d.domain_name}</td>
               <td>${d.provider_type}</td>
               <td>${d.status}</td>
-              <td><button class="danger delDomain" data-id="${d.id}" data-name="${d.domain_name}">删除</button></td>
-            </tr>`
-          )
+              <td class="${expiresText.soon ? "text-danger" : ""}">${expiresText.text}</td>
+              <td style="white-space:nowrap">
+                <button class="secondary refreshWhois" data-id="${d.id}">查询到期</button>
+                <button class="danger delDomain" data-id="${d.id}" data-name="${d.domain_name}">删除</button>
+              </td>
+            </tr>`;
+          })
           .join("")}
       </table>`
     : `<p>暂无域名，请先在「解析平台账号」中添加账号并导入域名。</p>`;
+
+  container.querySelectorAll(".refreshWhois").forEach(
+    (btn) => (btn.onclick = async () => {
+      btn.textContent = "查询中...";
+      btn.disabled = true;
+      try {
+        const r = await api(`/domains/${btn.dataset.id}/refresh-whois`, { method: "POST" });
+        if (r.ok) {
+          toast("到期时间已更新", "success");
+          renderDomainListTable(domains.map((d) => (d.id === Number(btn.dataset.id) ? { ...d, whois_expires_at: r.whoisExpiresAt } : d)));
+        } else {
+          toast(r.error || "查询失败", "error");
+          btn.textContent = "查询到期";
+          btn.disabled = false;
+        }
+      } catch (e) {
+        toast(e.message, "error");
+        btn.textContent = "查询到期";
+        btn.disabled = false;
+      }
+    })
+  );
 
   container.querySelectorAll(".delDomain").forEach(
     (btn) => (btn.onclick = async () => {
@@ -359,8 +540,9 @@ async function loadRecords(domainId) {
     <input id="value" placeholder="记录值" />
     <input id="ttl" placeholder="TTL" value="600" style="width:80px" />
     <input id="remark" placeholder="备注（可选）" style="width:140px" />
-    ${isCloudflare ? `<label style="font-size:13px"><input type="checkbox" id="proxied" /> 启用代理(橙云)</label>` : ""}
+    ${isCloudflare ? cloudToggleHtml("proxied", false, "启用代理") : ""}
     <button id="addRecordBtn">添加记录</button>`;
+  if (isCloudflare) bindCloudToggle("proxied");
   document.getElementById("addRecordBtn").onclick = async () => {
     try {
       await api(`/domains/${domainId}/records`, {
@@ -371,7 +553,7 @@ async function loadRecords(domainId) {
           value: document.getElementById("value").value,
           ttl: Number(document.getElementById("ttl").value) || 600,
           remark: document.getElementById("remark").value || undefined,
-          proxied: isCloudflare ? document.getElementById("proxied").checked : undefined,
+          proxied: isCloudflare ? document.getElementById("proxied").dataset.checked === "true" : undefined,
         },
       });
       toast("添加成功", "success");
@@ -402,8 +584,8 @@ async function loadRecords(domainId) {
                 <td>${r.rr}</td><td>${r.type}</td>
                 <td class="value-cell" title="${String(r.value).replace(/"/g, "&quot;")}">${r.value}</td>
                 <td>${r.ttl}</td>
-                ${isCloudflare ? `<td style="width:36px;text-align:center">${cloudIcon(r.proxied)}</td>` : ""}
-                <td><input class="remarkInput" data-id="${r.id}" value="${(r.remark || "").replace(/"/g, "&quot;")}" placeholder="备注" style="width:100px;font-size:12px" /></td>
+                ${isCloudflare ? `<td style="width:72px;text-align:center"><span class="cloud-toggle-cell" data-id="${r.id}" data-checked="${r.proxied ? "true" : "false"}" style="cursor:pointer;display:inline-flex">${cloudIcon(r.proxied)}</span></td>` : ""}
+                <td><input class="remarkInput" data-id="${r.id}" value="${(r.remark || "").replace(/"/g, "&quot;")}" placeholder="备注" style="width:150px;font-size:12px" /></td>
                 <td style="white-space:nowrap"><button class="secondary editRecord" data-record='${JSON.stringify(r).replace(/'/g, "&apos;")}'>修改</button>
                     <button class="danger delRecord" data-id="${r.id}">删除</button></td>
               </tr>`
@@ -442,6 +624,26 @@ async function loadRecords(domainId) {
               method: "PUT",
               body: { remark: input.value },
             });
+          } catch (e) {
+            toast(e.message, "error");
+          }
+        })
+    );
+
+    listEl.querySelectorAll(".cloud-toggle-cell").forEach(
+      (cell) =>
+        (cell.onclick = async () => {
+          const record = records.find((r) => String(r.id) === cell.dataset.id);
+          if (!record) return;
+          const newProxied = cell.dataset.checked !== "true";
+          try {
+            await api(`/domains/${domainId}/records/${cell.dataset.id}`, {
+              method: "PUT",
+              body: { rr: record.rr, type: record.type, value: record.value, ttl: record.ttl, line: record.line, priority: record.priority, proxied: newProxied },
+            });
+            cell.dataset.checked = String(newProxied);
+            cell.innerHTML = cloudIcon(newProxied);
+            toast(newProxied ? "已开启代理" : "已关闭代理", "success");
           } catch (e) {
             toast(e.message, "error");
           }
@@ -493,17 +695,14 @@ function showEditRecordModal(domainId, record, isCloudflare) {
       <input id="editValue" value="${record.value}" style="width:100%" />
       <label>TTL</label>
       <input id="editTtl" value="${record.ttl}" style="width:100%" />
-      ${
-        isCloudflare
-          ? `<label><input type="checkbox" id="editProxied" ${record.proxied ? "checked" : ""} /> 启用代理(橙云)</label>`
-          : ""
-      }
+      ${isCloudflare ? cloudToggleHtml("editProxied", !!record.proxied, "启用代理") : ""}
       <div class="modal-actions">
         <button class="secondary" id="cancelEditBtn">取消</button>
         <button id="saveEditBtn">保存</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
+  if (isCloudflare) bindCloudToggle("editProxied");
   document.getElementById("cancelEditBtn").onclick = () => overlay.remove();
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
   document.getElementById("saveEditBtn").onclick = async () => {
@@ -515,7 +714,7 @@ function showEditRecordModal(domainId, record, isCloudflare) {
           type: document.getElementById("editType").value,
           value: document.getElementById("editValue").value,
           ttl: Number(document.getElementById("editTtl").value) || 600,
-          proxied: isCloudflare ? document.getElementById("editProxied").checked : undefined,
+          proxied: isCloudflare ? document.getElementById("editProxied").dataset.checked === "true" : undefined,
         },
       });
       toast("修改成功", "success");
@@ -601,6 +800,7 @@ async function renderProviders(main) {
         .map(
           (p) => `<tr><td>${p.name}</td><td>${p.type}</td>
           <td><button class="testP" data-id="${p.id}">测试</button>
+              <button class="secondary editP" data-id="${p.id}" data-name="${p.name}" data-type="${p.type}">修改</button>
               <button class="discoverP" data-id="${p.id}">发现域名</button>
               <button class="danger delP" data-id="${p.id}">删除</button></td></tr>`
         )
@@ -617,6 +817,9 @@ async function renderProviders(main) {
       }
     })
   );
+  document.querySelectorAll(".editP").forEach(
+    (btn) => (btn.onclick = () => showEditProviderModal(btn.dataset.id, btn.dataset.name, btn.dataset.type, main))
+  );
   document.querySelectorAll(".discoverP").forEach(
     (btn) => (btn.onclick = () => showDiscoverDomainsModal(btn.dataset.id))
   );
@@ -627,6 +830,45 @@ async function renderProviders(main) {
       renderProviders(main);
     })
   );
+}
+
+/** 修改解析平台账号弹窗：备注名可直接改；凭据字段留空表示不修改，只有填了才会覆盖原有凭据 */
+function showEditProviderModal(providerId, currentName, type, main) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  const fields = PROVIDER_CRED_FIELDS[type] || [];
+  overlay.innerHTML = `
+    <div class="modal-box" style="width:420px">
+      <h3>修改解析平台账号</h3>
+      <label>备注名称</label>
+      <input id="editPName" value="${currentName}" style="width:100%" />
+      <label style="margin-top:8px">凭据（留空表示不修改，只有要更换密钥时才填）</label>
+      <div id="editCredFields">${fields.map(([key, label]) => `<input data-f="${key}" placeholder="${label}（留空不改）" style="width:100%;margin:4px 0" />`).join("")}</div>
+      <div class="modal-actions">
+        <button class="secondary" id="cancelEditPBtn">取消</button>
+        <button id="saveEditPBtn">保存</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById("cancelEditPBtn").onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.getElementById("saveEditPBtn").onclick = async () => {
+    const credentials = {};
+    overlay.querySelectorAll("#editCredFields input").forEach((i) => {
+      if (i.value) credentials[i.dataset.f] = i.value;
+    });
+    try {
+      await api(`/providers/${providerId}`, {
+        method: "PUT",
+        body: { name: document.getElementById("editPName").value, credentials: Object.keys(credentials).length ? credentials : undefined },
+      });
+      toast("修改成功", "success");
+      overlay.remove();
+      renderProviders(main);
+    } catch (e) {
+      toast(e.message, "error");
+    }
+  };
 }
 
 /** 发现域名弹窗：从平台拉取域名列表供勾选，已导入过的默认勾选并标注 */
@@ -729,25 +971,34 @@ async function renderSsl(main) {
     const certs = filterDomainId ? await api(`/domains/${filterDomainId}/certs`) : await api(`/domains/certs`);
     const certListEl = document.getElementById("certList");
     certListEl.innerHTML = certs.length
-      ? `<table><tr><th></th><th>域名</th><th>CN</th><th>状态</th><th>到期时间</th><th>操作</th></tr>${certs
-          .map(
-            (c) => `<tr>
+      ? `<table><tr><th></th><th>域名</th><th>证书域名</th><th>状态</th><th>到期时间</th><th>操作</th></tr>${certs
+          .map((c) => {
+            const sans = JSON.parse(c.sans || "[]").filter((s) => s !== c.common_name);
+            return `<tr>
               <td><input type="checkbox" class="certRowCheck" data-id="${c.id}" /></td>
               <td>${c.domain_name || ""}</td>
-              <td>${c.common_name}</td><td><span class="tag ${c.status}">${c.status}</span></td>
+              <td>${[c.common_name, ...sans].join("<br/>")}</td>
+              <td><span class="tag ${c.status}">${c.status}</span></td>
               <td>${c.expires_at ? new Date(c.expires_at * 1000).toLocaleDateString() : "-"}</td>
               <td style="white-space:nowrap">${
                 c.status === "issued"
-                  ? `<button class="view secondary" data-id="${c.id}" data-domain="${c.domain_id}">查看</button> <button class="dl" data-id="${c.id}" data-domain="${c.domain_id}">下载</button> <button class="renew secondary" data-id="${c.id}" data-domain="${c.domain_id}">续签</button> `
+                  ? `<button class="detail secondary" data-cert='${JSON.stringify(c).replace(/'/g, "&apos;")}'>详情</button> <button class="view secondary" data-id="${c.id}" data-domain="${c.domain_id}">查看</button> <button class="dl" data-id="${c.id}" data-domain="${c.domain_id}">下载</button> <button class="renew secondary" data-id="${c.id}" data-domain="${c.domain_id}">续签</button> `
                   : ""
-              }<button class="danger delCert" data-id="${c.id}" data-cn="${c.common_name}">删除</button></td></tr>`
-          )
+              }<button class="danger delCert" data-id="${c.id}" data-cn="${c.common_name}">删除</button></td></tr>`;
+          })
           .join("")}</table>`
       : `<p>暂无证书</p>`;
 
     document.getElementById("selectAllCerts").onchange = (e) => {
       certListEl.querySelectorAll(".certRowCheck").forEach((cb) => (cb.checked = e.target.checked));
     };
+
+    certListEl.querySelectorAll(".detail").forEach(
+      (btn) => (btn.onclick = () => {
+        const cert = JSON.parse(btn.dataset.cert.replace(/&apos;/g, "'"));
+        showCertDetailModal(cert);
+      })
+    );
 
     certListEl.querySelectorAll(".delCert").forEach(
       (btn) => (btn.onclick = async () => {
@@ -854,6 +1105,31 @@ function pollCertStatus(domainId, certId, onUpdate, triesLeft = 24) {
       pollCertStatus(domainId, certId, onUpdate, triesLeft - 1);
     }
   }, 5000);
+}
+
+/** 证书详情弹窗 */
+function showCertDetailModal(cert) {
+  const sans = JSON.parse(cert.sans || "[]").filter((s) => s !== cert.common_name);
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box" style="width:480px">
+      <h3>证书详情</h3>
+      <table>
+        <tr><th style="width:110px;text-align:left">主域名</th><td>${cert.common_name}</td></tr>
+        <tr><th style="text-align:left">附加域名</th><td>${sans.length ? sans.join("<br/>") : "（无）"}</td></tr>
+        <tr><th style="text-align:left">颁发机构</th><td>${cert.issuer || "（未知，可能是本系统迁移GitHub Actions签发前签发的旧证书）"}</td></tr>
+        <tr><th style="text-align:left">生效时间</th><td>${cert.issued_at ? new Date(cert.issued_at * 1000).toLocaleString() : "-"}</td></tr>
+        <tr><th style="text-align:left">过期时间</th><td>${cert.expires_at ? new Date(cert.expires_at * 1000).toLocaleString() : "-"}</td></tr>
+        <tr><th style="text-align:left">自动续签</th><td>${cert.auto_renew ? "已开启" : "已关闭"}</td></tr>
+      </table>
+      <div class="modal-actions">
+        <button id="closeCertDetailBtn">关闭</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById("closeCertDetailBtn").onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
 }
 
 // ---------------- 用户管理 ----------------
@@ -1062,11 +1338,15 @@ const NOTIFY_FIELDS = {
   serverchan: ["sendKey"],
 };
 
+const NOTIFY_TYPE_LABELS = Object.fromEntries(NOTIFY_TYPES);
+
 async function renderNotify(main) {
   main.innerHTML = `<div class="card"><h3>新增通知渠道</h3>
-    <select id="nType"></select>
-    <div id="nFields"></div>
-    <button id="addNotifyBtn">保存</button></div>
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+      <select id="nType"></select>
+      <div id="nFields" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+      <button id="addNotifyBtn">新增</button>
+    </div></div>
     <div class="card"><h3>已配置渠道</h3><div id="notifyList">加载中...</div></div>`;
 
   const sel = document.getElementById("nType");
@@ -1084,7 +1364,7 @@ async function renderNotify(main) {
     document.querySelectorAll("#nFields input").forEach((i) => (config[i.dataset.f] = i.value));
     try {
       await api("/notify", { method: "POST", body: { type: sel.value, config } });
-      toast("保存成功", "success");
+      toast("新增成功", "success");
       renderNotify(main);
     } catch (e) {
       toast(e.message, "error");
@@ -1095,8 +1375,10 @@ async function renderNotify(main) {
   document.getElementById("notifyList").innerHTML = list.length
     ? `<table><tr><th>类型</th><th>状态</th><th>操作</th></tr>${list
         .map(
-          (n) => `<tr><td>${n.type}</td><td>${n.enabled ? "启用" : "禁用"}</td>
-          <td><button class="testN" data-id="${n.id}">测试</button> <button class="danger delN" data-id="${n.id}">删除</button></td></tr>`
+          (n) => `<tr><td>${NOTIFY_TYPE_LABELS[n.type] || n.type}</td><td>${n.enabled ? "启用" : "禁用"}</td>
+          <td><button class="testN" data-id="${n.id}">测试</button>
+              <button class="secondary editN" data-id="${n.id}" data-type="${n.type}">修改</button>
+              <button class="danger delN" data-id="${n.id}">删除</button></td></tr>`
         )
         .join("")}</table>`
     : `<p>暂未配置通知渠道</p>`;
@@ -1107,12 +1389,54 @@ async function renderNotify(main) {
       toast(r.ok ? "发送成功，请查收" : r.error, r.ok ? "success" : "error");
     })
   );
+  document.querySelectorAll(".editN").forEach(
+    (btn) => (btn.onclick = () => showEditNotifyModal(btn.dataset.id, btn.dataset.type, main))
+  );
   document.querySelectorAll(".delN").forEach(
     (btn) => (btn.onclick = async () => {
       await api(`/notify/${btn.dataset.id}`, { method: "DELETE" });
       renderNotify(main);
     })
   );
+}
+
+/** 修改通知渠道弹窗：渠道类型不能改（改类型等于换成另一种渠道，直接新增更清楚），只改配置字段 */
+async function showEditNotifyModal(channelId, type, main) {
+  let detail;
+  try {
+    detail = await api(`/notify/${channelId}`);
+  } catch (e) {
+    toast(e.message, "error");
+    return;
+  }
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box" style="width:400px">
+      <h3>修改通知渠道 - ${NOTIFY_TYPE_LABELS[type] || type}</h3>
+      <div id="editNFields">${(NOTIFY_FIELDS[type] || [])
+        .map((f) => `<input data-f="${f}" placeholder="${f}" value="${(detail.config[f] || "").toString().replace(/"/g, "&quot;")}" style="width:100%;margin:4px 0" />`)
+        .join("")}</div>
+      <div class="modal-actions">
+        <button class="secondary" id="cancelEditNBtn">取消</button>
+        <button id="saveEditNBtn">保存</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById("cancelEditNBtn").onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.getElementById("saveEditNBtn").onclick = async () => {
+    const config = {};
+    overlay.querySelectorAll("#editNFields input").forEach((i) => (config[i.dataset.f] = i.value));
+    try {
+      await api(`/notify/${channelId}`, { method: "PUT", body: { config } });
+      toast("修改成功", "success");
+      overlay.remove();
+      renderNotify(main);
+    } catch (e) {
+      toast(e.message, "error");
+    }
+  };
 }
 
 // ---------------- 开放API / 登录直达链接 ----------------

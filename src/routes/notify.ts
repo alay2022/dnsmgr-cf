@@ -26,6 +26,24 @@ notifyRoutes.post("/", async (c) => {
   return c.json({ ok: true });
 });
 
+notifyRoutes.get("/:id", async (c) => {
+  const user = c.get("user") as JwtPayload;
+  const row = await c.env.DB.prepare("SELECT * FROM notify_channels WHERE id = ? AND user_id = ?")
+    .bind(Number(c.req.param("id")), user.uid)
+    .first<any>();
+  if (!row) return c.json({ error: "渠道不存在" }, 404);
+  return c.json({ id: row.id, type: row.type, config: JSON.parse(row.config), enabled: row.enabled });
+});
+
+notifyRoutes.put("/:id", async (c) => {
+  const user = c.get("user") as JwtPayload;
+  const { config } = await c.req.json<{ config: Record<string, any> }>();
+  await c.env.DB.prepare("UPDATE notify_channels SET config = ? WHERE id = ? AND user_id = ?")
+    .bind(JSON.stringify(config), Number(c.req.param("id")), user.uid)
+    .run();
+  return c.json({ ok: true });
+});
+
 notifyRoutes.delete("/:id", async (c) => {
   const user = c.get("user") as JwtPayload;
   await c.env.DB.prepare("DELETE FROM notify_channels WHERE id = ? AND user_id = ?")

@@ -5,6 +5,21 @@
 import { AcmeClient } from "../src/acme/client";
 import type { DnsProvider } from "../src/providers/interface";
 import type { DnsRecord } from "../src/types";
+import { X509Certificate } from "node:crypto";
+
+/** 从证书PEM里解析出颁发机构的组织名（O=字段），Node内置X509Certificate，无需额外依赖 */
+function extractIssuerOrg(certPem: string): string | undefined {
+  try {
+    // certPem 可能是完整证书链（叶子证书+中间证书），只取第一张（叶子证书）
+    const leafPem = certPem.split("-----END CERTIFICATE-----")[0] + "-----END CERTIFICATE-----";
+    const cert = new X509Certificate(leafPem);
+    // issuer 格式类似 "C=US\nO=Let's Encrypt\nCN=R11"
+    const line = cert.issuer.split("\n").find((l) => l.startsWith("O="));
+    return line ? line.slice(2) : cert.issuer;
+  } catch {
+    return undefined;
+  }
+}
 
 export interface CiConfig {
   workerBaseUrl: string;
@@ -73,7 +88,7 @@ class RemoteDnsProvider implements DnsProvider {
 async function reportResult(
   cfg: CiConfig,
   certId: number,
-  result: { status: "issued" | "failed"; certPem?: string; keyPem?: string; expiresAt?: number; error?: string }
+  result: { status: "issued" | "failed"; certPem?: string; keyPem?: string; expiresAt?: number; issuer?: string; error?: string }
 ) {
   const res = await fetch(`${cfg.workerBaseUrl}/api/ci/certs/${certId}/complete`, {
     method: "POST",
@@ -116,6 +131,7 @@ export async function runIssuance(cfg: CiConfig, task: IssueTask): Promise<void>
       certPem: result.certPem,
       keyPem: result.keyPem,
       expiresAt: result.expiresAt,
+      issuer: extractIssuerOrg(result.certPem),
     });
     console.log(`[${task.commonName}] 完成`);
   } catch (e: any) {

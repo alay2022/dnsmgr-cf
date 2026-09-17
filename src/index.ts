@@ -11,6 +11,8 @@ import { notifyRoutes } from "./routes/notify";
 import { ciTokenRoutes, ciCallbackRoutes } from "./routes/ci";
 import { overviewRoutes } from "./routes/overview";
 import { toolsRoutes } from "./routes/tools";
+import { handleExpiryReminders } from "./cron/reminders";
+import { oauthRoutes } from "./routes/oauth";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -37,6 +39,7 @@ app.route("/api/open", ciTokenRoutes); // /api/open/ci-token
 app.route("/api/ci", ciCallbackRoutes); // /api/ci/certs/:id/complete, /api/ci/due-for-renewal
 app.route("/api/overview", overviewRoutes);
 app.route("/api/tools", toolsRoutes);
+app.route("/api/oauth", oauthRoutes);
 
 app.notFound((c) => c.json({ error: "Not Found" }, 404));
 app.onError((err, c) => {
@@ -44,8 +47,12 @@ app.onError((err, c) => {
   return c.json({ error: err.message || "服务器内部错误" }, 500);
 });
 
-// 证书签发/续签已经搬到 GitHub Actions 里跑（见 .github/workflows/），
-// 本项目不再需要 Workers 自己的 Cron Trigger，续签检查由 GitHub Actions 的 schedule 触发。
+// 证书签发/续签已经搬到 GitHub Actions 里跑（见 .github/workflows/）。
+// 但「到期提醒通知」这个任务很轻量（只查数据库+发通知，没有ACME签名运算），
+// 留在 Workers 自己的 Cron Trigger 里跑就够了，不需要搬去 GitHub Actions。
 export default {
   fetch: app.fetch,
+  scheduled: async (_event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
+    ctx.waitUntil(handleExpiryReminders(env));
+  },
 };

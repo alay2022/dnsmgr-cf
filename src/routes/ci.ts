@@ -66,6 +66,7 @@ ciCallbackRoutes.post("/certs/:certId/complete", async (c) => {
     certPem?: string;
     keyPem?: string;
     expiresAt?: number;
+    issuer?: string;
     error?: string;
   }>();
 
@@ -75,9 +76,9 @@ ciCallbackRoutes.post("/certs/:certId/complete", async (c) => {
   const ts = now();
   if (body.status === "issued") {
     await c.env.DB.prepare(
-      `UPDATE ssl_certs SET status='issued', cert_pem=?, key_pem=?, issued_at=?, expires_at=?, updated_at=? WHERE id=?`
+      `UPDATE ssl_certs SET status='issued', cert_pem=?, key_pem=?, issuer=?, issued_at=?, expires_at=?, updated_at=? WHERE id=?`
     )
-      .bind(body.certPem, body.keyPem, ts, body.expiresAt, ts, certId)
+      .bind(body.certPem, body.keyPem, body.issuer ?? null, ts, body.expiresAt, ts, certId)
       .run();
     await insertAuditLog(c.env, null, "ci_issue_cert_success", `cert:${certId}`, cert.common_name);
     await notifyDomainOwners(c.env, cert.domain_id, {

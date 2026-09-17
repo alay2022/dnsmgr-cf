@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import type { Env, JwtPayload } from "../types";
 import { requireAuth, requireAdmin } from "../middleware/auth";
-import { listDomainsForUser, reorderDomains, batchDeleteDomains, insertAuditLog } from "../db";
+import { listDomainsForUser, reorderDomains, batchDeleteDomains, insertAuditLog, now, userHasDomainPerm } from "../db";
+import { lookupWhois } from "../utils/whois";
 
 export const domainRoutes = new Hono<{ Bindings: Env }>();
 domainRoutes.use("*", requireAuth);
 
-/** 返回当前登录用户有权限查看的域名列表（管理员看全部），按自定义排序返回 */
+/** 返回当前登录用户有权限查看的域名列表（管理员看全部），按自定义排序返回；可选 ?providerId= 按解析平台账号筛选 */
 domainRoutes.get("/", async (c) => {
   const user = c.get("user") as JwtPayload;
   // 若是「登录直达链接」签发的受限token，只返回锁定的那一个域名
@@ -19,7 +20,9 @@ domainRoutes.get("/", async (c) => {
       .first();
     return c.json(row ? [row] : []);
   }
-  const domains = await listDomainsForUser(c.env, user.uid, user.role);
+  const providerId = c.req.query("providerId");
+  let domains = await listDomainsForUser(c.env, user.uid, user.role);
+  if (providerId) domains = (domains as any[]).filter((d) => String(d.provider_id) === providerId);
   return c.json(domains);
 });
 
@@ -69,4 +72,34 @@ domainRoutes.put("/:id/favorite", async (c) => {
     await c.env.DB.prepare("DELETE FROM user_favorites WHERE user_id = ? AND domain_id = ?").bind(user.uid, domainId).run();
   }
   return c.json({ ok: true });
+});
+
+/** 查询/刷新某个域名的注册到期时间（whois/RDAP），结果缓存在数据库，不是每次打开页面都查 */
+domainRoutes.post("/:id/refresh-whois", async (c) => {
+  const user = c.get("user") as JwtPayload;
+  const domainId = Number(c.req.param("id"));
+
+  if (user.role !== "admin") {
+    const ok = await userHasDomainPerm(c.env, user.uid, domainId, false);
+    if (!ok) return c.json({ error: "无权限" }, 403);
+  }
+
+  const domain = await c.env.DB.prepare("SELECT domain_name FROM domains WHERE id = ?").bind(domainId).first<{ domain_name: string }>();
+  if (!domain) return c.json({ error: "域名不存在" }, 404);
+
+  try {
+    const whois = await lookupWhois(domain.domain_name);
+    const ts = now();
+    let expiresAtSeconds: number | null = null;
+    if (whois.expiresAt) {
+      const parsed = Date.parse(whois.expiresAt);
+      if (!isNaN(parsed)) expiresAtSeconds = Math.floor(parsed / 1000);
+    }
+    await c.env.DB.prepare("UPDATE domains SET whois_expires_at = ?, whois_checked_at = ? WHERE id = ?")
+      .bind(expiresAtSeconds, ts, domainId)
+      .run();
+    return c.json({ ok: true, whoisExpiresAt: expiresAtSeconds });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 200);
+  }
 });

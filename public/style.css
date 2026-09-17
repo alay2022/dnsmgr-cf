@@ -124,6 +124,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .tag.issued { background: #e8ffea; color: #00b42a; }
 .tag.pending { background: #fff7e8; color: #ff7d00; }
 .tag.failed { background: #ffece8; color: var(--danger); }
+.text-danger { color: var(--danger); font-weight: 500; }
 
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.45);
@@ -155,6 +156,10 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .fav-icon { color: #cbd5e1; transition: color .15s ease; vertical-align: middle; }
 .fav-icon.active { color: #f59e0b; }
 .favStar:hover .fav-icon { color: #f59e0b; }
+
+/* 云朵代理开关（表单里的可点击切换版本） */
+.cloud-toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; color: #94a3b8; user-select: none; }
+.cloud-toggle.on { color: #f6821f; }
 
 .favStar { color: #c9cdd4; font-size: 15px; }
 .favStar.active { color: #ff9a2e; }
