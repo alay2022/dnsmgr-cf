@@ -104,6 +104,16 @@ npx wrangler pages deploy public --project-name dnsmgr-cf
 
 **务必登录后立即修改密码。**
 
+## MiSub 订阅管理（附加功能，与DNS管理无关）
+
+参考 [MiSub](https://github.com/CrazyForks/MiSub) 做的简化版代理节点/订阅管理，跟本项目其余功能完全独立，只是共用同一套账号体系和界面框架：
+
+- **手动节点**：粘贴 vmess/vless/trojan/ss/hysteria2 等节点链接，一行一个，批量导入
+- **机场订阅**：添加订阅地址，可以"刷新"拉取节点数、流量、到期时间（依赖机场是否在响应头返回 `subscription-userinfo`，不是所有机场都支持）
+- **订阅分组**：把若干机场订阅+手动节点组合成一个分组，生成一条公开的订阅链接（`https://你的Worker地址/sub/xxxx`），代理客户端直接订阅这条链接
+- 默认只支持输出**通用(base64)格式**，V2rayN/V2rayNG/Shadowrocket 等客户端可直接用；如果想要 Clash/Surge/singbox 专属格式，需要自己搭一个 [subconverter](https://github.com/tindy2013/subconverter) 服务，把地址填到 `wrangler.toml` 的 `MISUB_SUBCONVERTER_URL`
+- 权限模型跟"解析平台账号"一致：管理员能看到所有人的节点/订阅/分组，普通用户只能看到和管理自己的
+
 ## 证书签发架构：GitHub Actions
 
 **从这个版本开始，证书签发/续签不再由 Cloudflare Workers 自己执行，而是搬到了 GitHub Actions 里跑。** 原因：

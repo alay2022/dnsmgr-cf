@@ -13,6 +13,7 @@ import { overviewRoutes } from "./routes/overview";
 import { toolsRoutes } from "./routes/tools";
 import { handleExpiryReminders } from "./cron/reminders";
 import { oauthRoutes } from "./routes/oauth";
+import { misubRoutes, misubPublicRoutes } from "./routes/misub";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -40,6 +41,8 @@ app.route("/api/ci", ciCallbackRoutes); // /api/ci/certs/:id/complete, /api/ci/d
 app.route("/api/overview", overviewRoutes);
 app.route("/api/tools", toolsRoutes);
 app.route("/api/oauth", oauthRoutes);
+app.route("/api/misub", misubRoutes);
+app.route("/", misubPublicRoutes); // 公开订阅输出：GET /sub/:token，不需要登录
 
 app.notFound((c) => c.json({ error: "Not Found" }, 404));
 app.onError((err, c) => {

@@ -153,6 +153,7 @@ const NAV = [
   { key: "notify", label: "通知渠道" },
   { key: "applink", label: "开放API / 登录直达链接", adminOnly: true },
   { key: "tools", label: "工具箱" },
+  { key: "misub", label: "MiSub 订阅管理" },
 ];
 
 async function renderShell() {
@@ -297,6 +298,7 @@ function renderPage() {
     notify: renderNotify,
     applink: renderApplink,
     tools: renderTools,
+    misub: renderMisub,
   };
   (renderers[state.page] || renderOverview)(main);
 }
@@ -1606,6 +1608,245 @@ async function renderTools(main) {
         : `<p style="color:var(--muted)">未查询到相关证书记录</p>`;
     } catch (e) {
       resultEl.innerHTML = `<p style="color:red">${e.message}</p>`;
+    }
+  };
+}
+
+// ---------------- MiSub 订阅管理 ----------------
+async function renderMisub(main) {
+  main.innerHTML = `
+    <div class="card">
+      <h3>手动节点</h3>
+      <textarea id="nodeImportText" placeholder="粘贴节点链接，一行一个（vmess://、vless://、trojan://、ss://、hysteria2:// 等）" style="width:100%;min-height:70px;font-family:monospace;font-size:12px"></textarea>
+      <button id="importNodesBtn" style="margin-top:6px">批量导入</button>
+      <div id="nodeList" style="margin-top:10px">加载中...</div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <label><input type="checkbox" id="selectAllNodes" /> 全选</label>
+        <button class="danger" id="batchDeleteNodesBtn">批量删除</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>机场订阅</h3>
+      <input id="subName" placeholder="备注名称（可选）" style="width:160px" />
+      <input id="subUrl" placeholder="订阅地址 https://..." style="width:320px" />
+      <button id="addSubBtn">添加</button>
+      <div id="subList" style="margin-top:10px">加载中...</div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <label><input type="checkbox" id="selectAllSubs" /> 全选</label>
+        <button class="danger" id="batchDeleteSubsBtn">批量删除</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>订阅分组</h3>
+      <p style="color:var(--muted);font-size:12px">把机场订阅和手动节点自由组合成一个分组，生成一个对外的订阅链接，代理客户端直接订阅这个链接即可（自动聚合、去重）。</p>
+      <button id="createProfileBtn">新建分组</button>
+      <div id="profileList" style="margin-top:10px">加载中...</div>
+    </div>`;
+
+  await loadMisubNodes();
+  await loadMisubSubs();
+  await loadMisubProfiles();
+
+  document.getElementById("importNodesBtn").onclick = async () => {
+    const text = document.getElementById("nodeImportText").value;
+    if (!text.trim()) return toast("请先粘贴节点链接", "error");
+    try {
+      const r = await api("/misub/nodes/batch-import", { method: "POST", body: { text } });
+      toast(`已导入 ${r.imported} 个节点`, "success");
+      document.getElementById("nodeImportText").value = "";
+      loadMisubNodes();
+    } catch (e) {
+      toast(e.message, "error");
+    }
+  };
+
+  document.getElementById("addSubBtn").onclick = async () => {
+    const name = document.getElementById("subName").value;
+    const url = document.getElementById("subUrl").value;
+    if (!url) return toast("请填写订阅地址", "error");
+    try {
+      await api("/misub/subscriptions", { method: "POST", body: { name, url } });
+      toast("添加成功", "success");
+      document.getElementById("subUrl").value = "";
+      loadMisubSubs();
+    } catch (e) {
+      toast(e.message, "error");
+    }
+  };
+
+  document.getElementById("createProfileBtn").onclick = () => showMisubProfileModal();
+}
+
+async function loadMisubNodes() {
+  const nodes = await api("/misub/nodes");
+  const listEl = document.getElementById("nodeList");
+  listEl.innerHTML = nodes.length
+    ? `<table><tr><th></th><th>备注</th><th>链接</th><th>状态</th><th>操作</th></tr>${nodes
+        .map(
+          (n) => `<tr>
+            <td><input type="checkbox" class="nodeCheck" data-id="${n.id}" /></td>
+            <td>${n.name || ""}</td>
+            <td class="value-cell" title="${n.url.replace(/"/g, "&quot;")}" style="max-width:280px">${n.url}</td>
+            <td>${n.enabled ? "启用" : "禁用"}</td>
+            <td><button class="danger delNode" data-id="${n.id}">删除</button></td>
+          </tr>`
+        )
+        .join("")}</table>`
+    : `<p style="color:var(--muted)">暂无节点，可以在上方批量粘贴导入</p>`;
+
+  document.getElementById("selectAllNodes").onchange = (e) => {
+    listEl.querySelectorAll(".nodeCheck").forEach((cb) => (cb.checked = e.target.checked));
+  };
+  listEl.querySelectorAll(".delNode").forEach(
+    (btn) => (btn.onclick = async () => {
+      await api("/misub/nodes/batch-delete", { method: "POST", body: { ids: [Number(btn.dataset.id)] } });
+      loadMisubNodes();
+    })
+  );
+  document.getElementById("batchDeleteNodesBtn").onclick = async () => {
+    const ids = [...document.querySelectorAll(".nodeCheck:checked")].map((cb) => Number(cb.dataset.id));
+    if (!ids.length) return toast("请先勾选", "error");
+    await api("/misub/nodes/batch-delete", { method: "POST", body: { ids } });
+    toast("已删除", "success");
+    loadMisubNodes();
+  };
+}
+
+async function loadMisubSubs() {
+  const subs = await api("/misub/subscriptions");
+  const listEl = document.getElementById("subList");
+  listEl.innerHTML = subs.length
+    ? `<table><tr><th></th><th>名称</th><th>节点数</th><th>流量</th><th>到期</th><th>状态</th><th>操作</th></tr>${subs
+        .map((s) => {
+          const traffic = s.traffic_total
+            ? `${((s.traffic_used || 0) / 1e9).toFixed(1)}/${(s.traffic_total / 1e9).toFixed(1)}GB`
+            : "-";
+          const expires = s.expires_at ? new Date(s.expires_at * 1000).toLocaleDateString() : "-";
+          return `<tr>
+            <td><input type="checkbox" class="subCheck" data-id="${s.id}" /></td>
+            <td>${s.name || ""}</td>
+            <td>${s.node_count ?? "-"}</td>
+            <td>${traffic}</td>
+            <td>${expires}</td>
+            <td>${s.last_error ? `<span style="color:var(--danger)" title="${s.last_error.replace(/"/g, "&quot;")}">异常</span>` : "正常"}</td>
+            <td><button class="secondary refreshSub" data-id="${s.id}">刷新</button> <button class="danger delSub" data-id="${s.id}">删除</button></td>
+          </tr>`;
+        })
+        .join("")}</table>`
+    : `<p style="color:var(--muted)">暂无机场订阅</p>`;
+
+  document.getElementById("selectAllSubs").onchange = (e) => {
+    listEl.querySelectorAll(".subCheck").forEach((cb) => (cb.checked = e.target.checked));
+  };
+  listEl.querySelectorAll(".refreshSub").forEach(
+    (btn) => (btn.onclick = async () => {
+      btn.textContent = "刷新中...";
+      const r = await api(`/misub/subscriptions/${btn.dataset.id}/refresh`, { method: "POST" });
+      toast(r.ok ? "刷新成功" : r.error, r.ok ? "success" : "error");
+      loadMisubSubs();
+    })
+  );
+  listEl.querySelectorAll(".delSub").forEach(
+    (btn) => (btn.onclick = async () => {
+      await api("/misub/subscriptions/batch-delete", { method: "POST", body: { ids: [Number(btn.dataset.id)] } });
+      loadMisubSubs();
+    })
+  );
+  document.getElementById("batchDeleteSubsBtn").onclick = async () => {
+    const ids = [...document.querySelectorAll(".subCheck:checked")].map((cb) => Number(cb.dataset.id));
+    if (!ids.length) return toast("请先勾选", "error");
+    await api("/misub/subscriptions/batch-delete", { method: "POST", body: { ids } });
+    toast("已删除", "success");
+    loadMisubSubs();
+  };
+}
+
+async function loadMisubProfiles() {
+  const profiles = await api("/misub/profiles");
+  const listEl = document.getElementById("profileList");
+  listEl.innerHTML = profiles.length
+    ? `<table><tr><th>名称</th><th>订阅链接</th><th>操作</th></tr>${profiles
+        .map((p) => {
+          const link = `${API || location.origin}/sub/${p.share_token}`;
+          return `<tr>
+            <td>${p.name}</td>
+            <td class="value-cell" style="max-width:280px">${link}</td>
+            <td>
+              <button class="secondary copyLink" data-link="${link}">复制链接</button>
+              <button class="secondary editProfile" data-id="${p.id}">编辑</button>
+              <button class="danger delProfile" data-id="${p.id}">删除</button>
+            </td>
+          </tr>`;
+        })
+        .join("")}</table>`
+    : `<p style="color:var(--muted)">还没有分组，点上方"新建分组"创建一个</p>`;
+
+  listEl.querySelectorAll(".copyLink").forEach(
+    (btn) => (btn.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(btn.dataset.link);
+        toast("链接已复制", "success");
+      } catch {
+        toast("复制失败，请手动选中复制", "error");
+      }
+    })
+  );
+  listEl.querySelectorAll(".editProfile").forEach((btn) => (btn.onclick = () => showMisubProfileModal(Number(btn.dataset.id))));
+  listEl.querySelectorAll(".delProfile").forEach(
+    (btn) => (btn.onclick = async () => {
+      if (!confirm("确认删除该分组？对应的订阅链接会立即失效。")) return;
+      await api(`/misub/profiles/${btn.dataset.id}`, { method: "DELETE" });
+      loadMisubProfiles();
+    })
+  );
+}
+
+/** 新建/编辑分组弹窗：勾选要包含的机场订阅和手动节点 */
+async function showMisubProfileModal(profileId) {
+  const [nodes, subs, profiles] = await Promise.all([api("/misub/nodes"), api("/misub/subscriptions"), profileId ? api("/misub/profiles") : []]);
+  const existing = profileId ? profiles.find((p) => p.id === profileId) : null;
+  const existingSubIds = new Set(existing ? JSON.parse(existing.subscription_ids) : []);
+  const existingNodeIds = new Set(existing ? JSON.parse(existing.node_ids) : []);
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box" style="width:480px">
+      <h3>${profileId ? "编辑分组" : "新建分组"}</h3>
+      <input id="profileName" placeholder="分组名称" value="${existing ? existing.name : ""}" style="width:100%" />
+      <div style="max-height:40vh;overflow:auto;margin-top:10px">
+        <label style="font-size:13px;color:var(--muted)">机场订阅</label>
+        ${subs.map((s) => `<div><label><input type="checkbox" class="profileSubCheck" value="${s.id}" ${existingSubIds.has(s.id) ? "checked" : ""} /> ${s.name}</label></div>`).join("") || "<p style='font-size:12px;color:var(--muted)'>暂无</p>"}
+        <label style="font-size:13px;color:var(--muted);margin-top:8px;display:block">手动节点</label>
+        ${nodes.map((n) => `<div><label><input type="checkbox" class="profileNodeCheck" value="${n.id}" ${existingNodeIds.has(n.id) ? "checked" : ""} /> ${n.name || n.url}</label></div>`).join("") || "<p style='font-size:12px;color:var(--muted)'>暂无</p>"}
+      </div>
+      <div class="modal-actions">
+        <button class="secondary" id="cancelProfileBtn">取消</button>
+        <button id="saveProfileBtn">保存</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById("cancelProfileBtn").onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  document.getElementById("saveProfileBtn").onclick = async () => {
+    const name = document.getElementById("profileName").value;
+    if (!name) return toast("请填写分组名称", "error");
+    const subscriptionIds = [...overlay.querySelectorAll(".profileSubCheck:checked")].map((cb) => Number(cb.value));
+    const nodeIds = [...overlay.querySelectorAll(".profileNodeCheck:checked")].map((cb) => Number(cb.value));
+    try {
+      if (profileId) {
+        await api(`/misub/profiles/${profileId}`, { method: "PUT", body: { name, subscriptionIds, nodeIds } });
+      } else {
+        await api("/misub/profiles", { method: "POST", body: { name, subscriptionIds, nodeIds } });
+      }
+      toast("保存成功", "success");
+      overlay.remove();
+      loadMisubProfiles();
+    } catch (e) {
+      toast(e.message, "error");
     }
   };
 }

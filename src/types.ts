@@ -29,6 +29,7 @@ export interface Env {
   NODELOC_OAUTH_TOKEN_URL?: string;
   NODELOC_OAUTH_USERINFO_URL?: string;
   NODELOC_OAUTH_SCOPE?: string;
+  MISUB_SUBCONVERTER_URL?: string; // 可选，配置后支持把订阅转换为Clash/Surge/singbox等客户端专属格式
 }
 
 export type UserRole = "admin" | "user";

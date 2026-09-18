@@ -42,3 +42,8 @@ NODELOC_OAUTH_AUTHORIZE_URL = "https://www.nodeloc.com/oauth-provider/authorize"
 NODELOC_OAUTH_TOKEN_URL = "https://www.nodeloc.com/oauth-provider/token"
 NODELOC_OAUTH_USERINFO_URL = "https://www.nodeloc.com/oauth-provider/userinfo"
 NODELOC_OAUTH_SCOPE = "openid profile email"
+
+# 可选：MiSub订阅管理里，把订阅转换成Clash/Surge/singbox等客户端专属格式时用到的subconverter服务地址。
+# 不配置的话只能用通用(base64)格式，大多数客户端（V2rayN/V2rayNG/Shadowrocket等）都认这个格式，够用。
+# 公开的subconverter实例可以自己搜，或者自建一个（推荐，公开实例不稳定也有隐私风险）：https://github.com/tindy2013/subconverter
+# MISUB_SUBCONVERTER_URL = "https://your-subconverter.example.com/sub"
