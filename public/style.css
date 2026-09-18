@@ -163,3 +163,79 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 
 .favStar { color: #c9cdd4; font-size: 15px; }
 .favStar.active { color: #ff9a2e; }
+
+/* ============================================================
+   移动端适配（≤768px）：
+   - 侧边栏改成可收起的抽屉（默认隐藏，点汉堡按钮滑出，带遮罩层）
+   - 顶部加一条移动端专用的头部栏（汉堡按钮 + 标题）
+   - 所有表格改成可横向滚动，不撑破布局
+   - 弹窗宽度自适应，不超出屏幕
+   - 触屏下按钮/输入框加大，方便点击
+   ============================================================ */
+.mobile-topbar { display: none; }
+.sidebar-overlay { display: none; }
+
+@media (max-width: 768px) {
+  #app { display: block; }
+
+  .mobile-topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--sidebar-bg);
+    border-bottom: 1px solid var(--sidebar-border);
+    position: sticky;
+    top: 0;
+    z-index: 300;
+  }
+  .mobile-topbar h1 { font-size: 15px; margin: 0; flex: 1; }
+  .mobile-menu-btn {
+    background: none; border: none; padding: 6px; font-size: 20px;
+    line-height: 1; color: var(--text); cursor: pointer;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: 78vw;
+    max-width: 280px;
+    z-index: 500;
+    transform: translateX(-100%);
+    transition: transform .2s ease;
+    overflow-y: auto;
+    box-shadow: 2px 0 12px rgba(0,0,0,.12);
+  }
+  .sidebar.mobile-open { transform: translateX(0); }
+
+  .sidebar-overlay.show {
+    display: block;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.4);
+    z-index: 400;
+  }
+
+  .main { padding: 12px; }
+
+  /* 表格横向滚动，不撑破页面宽度 */
+  table { display: block; width: 100%; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
+  table tr { display: table-row; }
+
+  /* 弹窗宽度自适应屏幕，覆盖内联的固定px宽度 */
+  .modal-box { width: 92vw !important; max-width: 92vw; padding: 16px; }
+  .modal-box table { display: table; white-space: normal; }
+
+  /* 触屏下按钮/输入框加大，避免误触 */
+  button { padding: 9px 16px; font-size: 14px; }
+  input, select { padding: 9px 10px; font-size: 14px; margin-bottom: 6px; }
+
+  .login-box { width: 90vw; max-width: 340px; }
+
+  /* 概览页统计卡片改单列或双列，避免挤压 */
+  .card > div[style*="grid-template-columns"] { grid-template-columns: repeat(2, 1fr) !important; }
+}
+
+@media (max-width: 420px) {
+  .card { padding: 14px; }
+  .card > div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+}

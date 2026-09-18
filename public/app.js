@@ -172,16 +172,35 @@ async function renderShell() {
     : "";
 
   app.innerHTML = `
-    <div class="sidebar">
+    <div class="mobile-topbar">
+      <button class="mobile-menu-btn" id="mobileMenuBtn">☰</button>
+      <h1>DNSMGR-CF</h1>
+    </div>
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+    <div class="sidebar" id="sidebar">
       <h1>DNSMGR-CF</h1>
       <nav>${navHtml}${favHtml}<a id="accountSettingsLink">账号设置</a><a id="logoutLink">退出登录 (${state.user.username})</a></nav>
     </div>
     <div class="main" id="main"></div>`;
-  app.querySelectorAll("[data-page]").forEach((a) => (a.onclick = () => { state.page = a.dataset.page; render(); }));
+
+  const sidebar = document.getElementById("sidebar");
+  const overlay = document.getElementById("sidebarOverlay");
+  const closeMobileSidebar = () => {
+    sidebar.classList.remove("mobile-open");
+    overlay.classList.remove("show");
+  };
+  document.getElementById("mobileMenuBtn").onclick = () => {
+    sidebar.classList.toggle("mobile-open");
+    overlay.classList.toggle("show");
+  };
+  overlay.onclick = closeMobileSidebar;
+
+  app.querySelectorAll("[data-page]").forEach((a) => (a.onclick = () => { state.page = a.dataset.page; closeMobileSidebar(); render(); }));
   app.querySelectorAll("[data-jump-domain]").forEach(
     (a) => (a.onclick = () => {
       state.page = "domains";
       state.jumpToDomainId = Number(a.dataset.jumpDomain);
+      closeMobileSidebar();
       render();
     })
   );
