@@ -165,6 +165,59 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .favStar.active { color: #ff9a2e; }
 
 /* ============================================================
+   MiSub 卡片式布局
+   ============================================================ */
+.misub-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.misub-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 900px) { .misub-grid-2, .misub-grid-3 { grid-template-columns: 1fr; } }
+
+.misub-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; position: relative; cursor: grab;
+}
+.misub-card.dragging { opacity: .4; }
+.misub-card-head { display: flex; justify-content: space-between; align-items: flex-start; }
+.misub-card-icons { display: flex; gap: 8px; color: var(--muted); }
+.misub-card-icons svg { width: 16px; height: 16px; cursor: pointer; }
+.misub-card-icons svg:hover { color: var(--primary); }
+.misub-card-title { font-weight: 600; font-size: 15px; margin: 6px 0 2px; }
+.misub-card-sub { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.misub-toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 13px; }
+
+/* 简易开关（不依赖原生checkbox外观，跟截图里的紫色胶囊开关类似） */
+.switch { position: relative; display: inline-block; width: 38px; height: 20px; cursor: pointer; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .slider {
+  position: absolute; inset: 0; background: #d1d5db; border-radius: 999px; transition: .15s;
+}
+.switch .slider::before {
+  content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px;
+  background: #fff; border-radius: 50%; transition: .15s;
+}
+.switch input:checked + .slider { background: var(--primary); }
+.switch input:checked + .slider::before { transform: translateX(18px); }
+
+.misub-node-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; display: flex; align-items: center; gap: 8px; cursor: grab; position: relative;
+}
+.misub-node-card .chip { font-size: 11px; padding: 2px 7px; border-radius: 999px; background: #eef2ff; color: #4338ca; white-space: nowrap; }
+.misub-node-card .chip.proto { background: #dbeafe; color: #1d4ed8; }
+.misub-node-card .node-name { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.misub-node-card .node-actions { display: none; gap: 8px; color: var(--muted); flex-shrink: 0; }
+.misub-node-card:hover .node-actions { display: flex; }
+.misub-node-card .node-actions svg { width: 15px; height: 15px; cursor: pointer; }
+.misub-node-card .node-actions svg:hover { color: var(--primary); }
+.misub-node-card input[type="checkbox"] { flex-shrink: 0; }
+
+.misub-group-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.misub-group-tab {
+  padding: 5px 12px; border-radius: 999px; font-size: 12px; background: #f1f5f9; color: var(--text);
+  cursor: pointer; border: 1px solid transparent;
+}
+.misub-group-tab.active { background: var(--primary); color: #fff; }
+
+/* ============================================================
    移动端适配（≤768px）：
    - 侧边栏改成可收起的抽屉（默认隐藏，点汉堡按钮滑出，带遮罩层）
    - 顶部加一条移动端专用的头部栏（汉堡按钮 + 标题）

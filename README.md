@@ -108,10 +108,11 @@ npx wrangler pages deploy public --project-name dnsmgr-cf
 
 参考 [MiSub](https://github.com/CrazyForks/MiSub) 做的简化版代理节点/订阅管理，跟本项目其余功能完全独立，只是共用同一套账号体系和界面框架：
 
-- **手动节点**：粘贴 vmess/vless/trojan/ss/hysteria2 等节点链接，一行一个，批量导入
-- **机场订阅**：添加订阅地址，可以"刷新"拉取节点数、流量、到期时间（依赖机场是否在响应头返回 `subscription-userinfo`，不是所有机场都支持）
-- **订阅分组**：把若干机场订阅+手动节点组合成一个分组，生成一条公开的订阅链接（`https://你的Worker地址/sub/xxxx`），代理客户端直接订阅这条链接
-- 默认只支持输出**通用(base64)格式**，V2rayN/V2rayNG/Shadowrocket 等客户端可直接用；如果想要 Clash/Surge/singbox 专属格式，需要自己搭一个 [subconverter](https://github.com/tindy2013/subconverter) 服务，把地址填到 `wrangler.toml` 的 `MISUB_SUBCONVERTER_URL`
+- **我的订阅组**：卡片式展示（2列），支持拖拽排序；每张卡片可以单独开关"启用状态"和"公开访问"，显示被订阅次数，能查看最近的访问日志（IP+客户端），一键复制订阅链接、生成二维码
+- **手动节点**：卡片式展示（3列），支持拖拽排序、分组标签筛选、批量勾选删除；鼠标悬停节点卡片会显示"测速/编辑/删除"三个图标；新增改成弹窗式，支持单条编辑也支持多行粘贴批量导入；"测速"测的是能否建立TCP连接及握手耗时，不是真实代理转发速度（Workers 没法代理转发用户流量来测真实带宽）
+- **订阅导入为节点**：把一个外部机场订阅地址的内容直接拆开，逐条导入成手动节点（一次性拍平，导入后跟原订阅没有关联）
+- **机场订阅**：单独管理的订阅地址列表，在"订阅组"里可以直接勾选组合使用（保留实时引用，每次生成订阅链接都会重新拉取最新节点），可以"刷新"拉取节点数/流量/到期时间（依赖机场是否在响应头返回 `subscription-userinfo`）
+- 默认只支持输出通用(base64)格式；如果想要 Clash/Surge/singbox 专属格式，需要自己搭一个 [subconverter](https://github.com/tindy2013/subconverter) 服务，配置到 `wrangler.toml` 的 `MISUB_SUBCONVERTER_URL`
 - 权限模型跟"解析平台账号"一致：管理员能看到所有人的节点/订阅/分组，普通用户只能看到和管理自己的
 
 ## 证书签发架构：GitHub Actions
