@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Env, JwtPayload } from "../types";
 import { requireAuth, requireAdmin } from "../middleware/auth";
 import { now } from "../db";
-import { randomToken } from "../utils/crypto";
+import { randomShortId } from "../utils/crypto";
 import { connect } from "cloudflare:sockets";
 
 export const misubRoutes = new Hono<{ Bindings: Env }>();
@@ -76,33 +76,55 @@ misubRoutes.post("/nodes", async (c) => {
   return c.json({ ok: true, imported: lines.length });
 });
 
-/** 把一个外部订阅地址的内容直接展开导入成一批手动节点（一次性拍平导入，不保留实时引用） */
-misubRoutes.post("/nodes/import-subscription", async (c) => {
-  const user = c.get("user") as JwtPayload;
-  const { url, group } = await c.req.json<{ url: string; group?: string }>();
+/** 第一步：拉取外部订阅地址的内容，解析出节点列表，只返回预览，不写入数据库 */
+misubRoutes.post("/nodes/preview-subscription", async (c) => {
+  const { url } = await c.req.json<{ url: string }>();
   if (!url) return c.json({ error: "请提供订阅地址" }, 400);
 
-  let nodeUrls: string[];
   try {
-    const res = await fetch(url, { headers: { "User-Agent": "clash-verge/1.0" } });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    nodeUrls = decodeSubscriptionNodes(await res.text());
+    const res = await fetch(url, {
+      headers: { "User-Agent": "clash-verge/1.0", Accept: "*/*" },
+      redirect: "follow",
+    });
+    if (!res.ok) return c.json({ error: `拉取订阅失败: HTTP ${res.status}` }, 200);
+    const text = await res.text();
+    const nodeUrls = decodeSubscriptionNodes(text);
+    if (!nodeUrls.length) {
+      // 帮着排查：把响应内容的开头一小段带出来，方便看到底是什么格式导致解析不出节点
+      const preview = text.slice(0, 150).replace(/\s+/g, " ");
+      return c.json({ error: `没有解析出节点。响应内容开头：${preview || "(空)"}` }, 200);
+    }
+    return c.json({ items: nodeUrls.map((u) => ({ name: extractNodeName(u), url: u })) });
   } catch (e: any) {
-    return c.json({ error: `拉取订阅失败: ${e.message}` }, 500);
+    return c.json({ error: `拉取订阅失败: ${e.message}` }, 200);
   }
-  if (!nodeUrls.length) return c.json({ error: "该订阅没有解析出任何节点" }, 400);
+});
+
+/** 第二步：把预览里勾选的节点正式导入成手动节点 */
+misubRoutes.post("/nodes/import-selected", async (c) => {
+  const user = c.get("user") as JwtPayload;
+  const { items, group } = await c.req.json<{ items: { name: string; url: string }[]; group?: string }>();
+  if (!Array.isArray(items) || !items.length) return c.json({ error: "没有选中任何节点" }, 400);
 
   const ts = now();
   const maxRow = await c.env.DB.prepare("SELECT MAX(sort_order) as m FROM misub_nodes").first<{ m: number | null }>();
   let order = (maxRow?.m ?? 0) + 1;
-  for (const nodeUrl of nodeUrls) {
+  for (const item of items) {
     await c.env.DB.prepare(
       "INSERT INTO misub_nodes (owner_user_id, name, url, group_name, enabled, sort_order, created_at, updated_at) VALUES (?,?,?,?,1,?,?,?)"
     )
-      .bind(user.uid, extractNodeName(nodeUrl), nodeUrl, group || null, order++, ts, ts)
+      .bind(user.uid, item.name, item.url, group || null, order++, ts, ts)
       .run();
   }
-  return c.json({ ok: true, imported: nodeUrls.length });
+  return c.json({ ok: true, imported: items.length });
+});
+
+/** 对一个还没入库的节点链接直接测速（订阅导入预览页的"全部测速"用这个，不需要先有节点ID） */
+misubRoutes.post("/speedtest-url", async (c) => {
+  const { url } = await c.req.json<{ url: string }>();
+  const target = parseHostPort(url);
+  if (!target) return c.json({ ok: false, error: "无法解析出服务器地址" }, 200);
+  return c.json(await doSpeedTest(target));
 });
 
 misubRoutes.put("/nodes/:id", async (c) => {
@@ -145,6 +167,15 @@ misubRoutes.post("/nodes/:id/speedtest", async (c) => {
     return c.json({ ok: false, error: "无法从该节点链接解析出服务器地址" }, 200);
   }
 
+  const result = await doSpeedTest(target);
+  await c.env.DB.prepare("UPDATE misub_nodes SET last_latency_ms=?, last_tested_at=? WHERE id=?")
+    .bind(result.ok ? result.latency : null, now(), id)
+    .run();
+  return c.json(result);
+});
+
+/** 对一个 host:port 发起一次TCP连接测速，返回 {ok, latency} 或 {ok:false, error} */
+async function doSpeedTest(target: { host: string; port: number }): Promise<{ ok: boolean; latency?: number; error?: string }> {
   let socket: any;
   try {
     const start = Date.now();
@@ -153,12 +184,9 @@ misubRoutes.post("/nodes/:id/speedtest", async (c) => {
       socket.opened,
       new Promise((_, reject) => setTimeout(() => reject(new Error("连接超时(5秒)")), 5000)),
     ]);
-    const latency = Date.now() - start;
-    await c.env.DB.prepare("UPDATE misub_nodes SET last_latency_ms=?, last_tested_at=? WHERE id=?").bind(latency, now(), id).run();
-    return c.json({ ok: true, latency });
+    return { ok: true, latency: Date.now() - start };
   } catch (e: any) {
-    await c.env.DB.prepare("UPDATE misub_nodes SET last_latency_ms=NULL, last_tested_at=? WHERE id=?").bind(now(), id).run();
-    return c.json({ ok: false, error: e.message || "连接失败（也可能是机场屏蔽了Cloudflare出口IP，不代表节点真的不可用）" }, 200);
+    return { ok: false, error: e.message || "连接失败（也可能是机场屏蔽了Cloudflare出口IP，不代表节点真的不可用）" };
   } finally {
     if (socket) {
       try {
@@ -168,7 +196,7 @@ misubRoutes.post("/nodes/:id/speedtest", async (c) => {
       }
     }
   }
-});
+}
 
 // ==================== 订阅组 (Profiles) ====================
 
@@ -199,10 +227,22 @@ misubRoutes.post("/profiles", async (c) => {
 
   const ts = now();
   const maxRow = await c.env.DB.prepare("SELECT MAX(sort_order) as m FROM misub_profiles").first<{ m: number | null }>();
+
+  let shareToken = "";
+  for (let i = 0; i < 5; i++) {
+    const candidate = randomShortId(6);
+    const clash = await c.env.DB.prepare("SELECT id FROM misub_profiles WHERE share_token = ?").bind(candidate).first();
+    if (!clash) {
+      shareToken = candidate;
+      break;
+    }
+  }
+  if (!shareToken) return c.json({ error: "生成分享码失败，请重试一次" }, 500);
+
   const res = await c.env.DB.prepare(
     "INSERT INTO misub_profiles (owner_user_id, name, share_token, custom_id, node_ids, sort_order, enabled, is_public, created_at, updated_at) VALUES (?,?,?,?,?,?,1,1,?,?)"
   )
-    .bind(user.uid, name, randomToken(16), customId || null, JSON.stringify(nodeIds || []), (maxRow?.m ?? 0) + 1, ts, ts)
+    .bind(user.uid, name, shareToken, customId || null, JSON.stringify(nodeIds || []), (maxRow?.m ?? 0) + 1, ts, ts)
     .run();
   return c.json({ ok: true, id: res.meta.last_row_id });
 });
@@ -271,11 +311,17 @@ function extractNodeName(url: string): string {
 
 export function decodeSubscriptionNodes(text: string): string[] {
   const trimmed = text.trim();
+  // 明文格式：直接就是一行（或多行）节点链接
   if (/^[a-z0-9]+:\/\//i.test(trimmed)) {
     return trimmed.split("\n").map((l) => l.trim()).filter(Boolean);
   }
+  // base64整体编码格式（机场订阅最常见）。先去掉所有空白字符（有些订阅会把base64内容折成多行），
+  // 转成标准字符集，并补齐到4的倍数长度（很多机场返回的base64缺尾部的'='填充，atob会直接报错）。
   try {
-    const decoded = atob(trimmed.replace(/-/g, "+").replace(/_/g, "/"));
+    let b64 = trimmed.replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
+    const pad = b64.length % 4;
+    if (pad) b64 += "=".repeat(4 - pad);
+    const decoded = atob(b64);
     return decoded.split("\n").map((l) => l.trim()).filter((l) => /^[a-z0-9]+:\/\//i.test(l));
   } catch {
     return [];
@@ -324,7 +370,7 @@ function parseHostPort(nodeUrl: string): { host: string; port: number } | null {
 
 // ==================== 公开订阅输出 ====================
 
-misubPublicRoutes.get("/sub/:idOrToken", async (c) => {
+misubPublicRoutes.get("/:idOrToken", async (c) => {
   const idOrToken = c.req.param("idOrToken");
   const profile = await c.env.DB.prepare("SELECT * FROM misub_profiles WHERE custom_id = ? OR share_token = ?")
     .bind(idOrToken, idOrToken)

@@ -1,85 +1,52 @@
 import { Hono } from "hono";
 import type { Env, JwtPayload } from "../types";
-import { requireAuth } from "../middleware/auth";
-import { signJwt, verifyJwt } from "../utils/crypto";
+import { requireAuth, requireAdmin } from "../middleware/auth";
+import { signJwt, verifyJwt, aesEncrypt, aesDecrypt } from "../utils/crypto";
 import { now, insertAuditLog } from "../db";
 
 export const oauthRoutes = new Hono<{ Bindings: Env }>();
 
-type ProviderKey = "github" | "google" | "nodeloc";
-
-interface ProviderConfig {
-  authorizeUrl: string;
-  tokenUrl: string;
-  userinfoUrl: string;
-  scope: string;
-  clientId?: string;
-  clientSecret?: string;
+interface ProviderRow {
+  provider: string;
+  label: string;
+  enabled: number;
+  sort_order: number;
+  client_id: string | null;
+  client_secret: string | null; // 加密存储
+  authorize_url: string | null;
+  token_url: string | null;
+  userinfo_url: string | null;
+  scope: string | null;
 }
 
-function getProviderConfig(env: Env, provider: ProviderKey): ProviderConfig | null {
-  switch (provider) {
-    case "github":
-      if (!env.GITHUB_OAUTH_CLIENT_ID || !env.GITHUB_OAUTH_CLIENT_SECRET) return null;
-      return {
-        authorizeUrl: "https://github.com/login/oauth/authorize",
-        tokenUrl: "https://github.com/login/oauth/access_token",
-        userinfoUrl: "https://api.github.com/user",
-        scope: "read:user",
-        clientId: env.GITHUB_OAUTH_CLIENT_ID,
-        clientSecret: env.GITHUB_OAUTH_CLIENT_SECRET,
-      };
-    case "google":
-      if (!env.GOOGLE_OAUTH_CLIENT_ID || !env.GOOGLE_OAUTH_CLIENT_SECRET) return null;
-      return {
-        authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-        tokenUrl: "https://oauth2.googleapis.com/token",
-        userinfoUrl: "https://www.googleapis.com/oauth2/v3/userinfo",
-        scope: "openid email profile",
-        clientId: env.GOOGLE_OAUTH_CLIENT_ID,
-        clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET,
-      };
-    case "nodeloc":
-      // NodeLoc 不是标准知名OAuth2服务商，具体端点请去NodeLoc自己的"开发者/应用"设置页面查看后填入
-      if (
-        !env.NODELOC_OAUTH_CLIENT_ID ||
-        !env.NODELOC_OAUTH_CLIENT_SECRET ||
-        !env.NODELOC_OAUTH_AUTHORIZE_URL ||
-        !env.NODELOC_OAUTH_TOKEN_URL ||
-        !env.NODELOC_OAUTH_USERINFO_URL
-      )
-        return null;
-      return {
-        authorizeUrl: env.NODELOC_OAUTH_AUTHORIZE_URL,
-        tokenUrl: env.NODELOC_OAUTH_TOKEN_URL,
-        userinfoUrl: env.NODELOC_OAUTH_USERINFO_URL,
-        scope: env.NODELOC_OAUTH_SCOPE || "",
-        clientId: env.NODELOC_OAUTH_CLIENT_ID,
-        clientSecret: env.NODELOC_OAUTH_CLIENT_SECRET,
-      };
-    default:
-      return null;
-  }
+async function getEnabledProvider(env: Env, provider: string): Promise<ProviderRow | null> {
+  const row = await env.DB.prepare("SELECT * FROM oauth_provider_configs WHERE provider = ? AND enabled = 1")
+    .bind(provider)
+    .first<ProviderRow>();
+  if (!row || !row.client_id || !row.client_secret || !row.authorize_url || !row.token_url || !row.userinfo_url) return null;
+  return row;
+}
+
+async function decryptSecret(env: Env, encrypted: string): Promise<string> {
+  return env.ENCRYPT_KEY ? aesDecrypt(encrypted, env.ENCRYPT_KEY) : encrypted;
 }
 
 function redirectUri(env: Env, provider: string): string {
   return `${(env.OAUTH_REDIRECT_BASE || "").replace(/\/$/, "")}/api/oauth/${provider}/callback`;
 }
 
-/** 前端用这个接口判断显示哪些「用XX登录」按钮（没配置对应Client ID/Secret的就不显示） */
-oauthRoutes.get("/providers", (c) => {
-  const available = (["github", "google", "nodeloc"] as ProviderKey[]).filter((p) => getProviderConfig(c.env, p));
-  return c.json({ available });
+/** 前端登录页用这个接口拿到「已启用、按排序」的登录方式列表 */
+oauthRoutes.get("/providers", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    "SELECT provider, label FROM oauth_provider_configs WHERE enabled = 1 ORDER BY sort_order"
+  ).all<{ provider: string; label: string }>();
+  return c.json({ available: results.map((r) => r.provider), labels: Object.fromEntries(results.map((r) => [r.provider, r.label])) });
 });
 
-/**
- * 跳转到第三方授权页。mode=login（登录页用，未登录状态）或 mode=link（已登录，去个人设置里绑定用）。
- * mode=link 时会把当前用户ID签进state，回调时用来关联绑定关系。
- */
 oauthRoutes.get("/:provider/start", async (c) => {
-  const provider = c.req.param("provider") as ProviderKey;
-  const config = getProviderConfig(c.env, provider);
-  if (!config) return c.text(`该登录方式未配置，请联系管理员`, 400);
+  const provider = c.req.param("provider");
+  const config = await getEnabledProvider(c.env, provider);
+  if (!config) return c.text("该登录方式未配置或未启用，请联系管理员", 400);
 
   const mode = c.req.query("mode") === "link" ? "link" : "login";
   let uid: number | undefined;
@@ -97,21 +64,20 @@ oauthRoutes.get("/:provider/start", async (c) => {
   );
 
   const qs = new URLSearchParams({
-    client_id: config.clientId!,
+    client_id: config.client_id!,
     redirect_uri: redirectUri(c.env, provider),
-    scope: config.scope,
+    scope: config.scope || "",
     state,
     response_type: "code",
   });
-  return c.redirect(`${config.authorizeUrl}?${qs.toString()}`);
+  return c.redirect(`${config.authorize_url}?${qs.toString()}`);
 });
 
-/** 第三方授权完成后跳回这里，交换token、拉用户信息，登录或绑定 */
 oauthRoutes.get("/:provider/callback", async (c) => {
-  const provider = c.req.param("provider") as ProviderKey;
-  const config = getProviderConfig(c.env, provider);
+  const provider = c.req.param("provider");
+  const config = await getEnabledProvider(c.env, provider);
   const frontendBase = c.env.FRONTEND_BASE || "";
-  if (!config) return c.text("该登录方式未配置", 400);
+  if (!config) return c.text("该登录方式未配置或未启用", 400);
 
   const code = c.req.query("code");
   const state = c.req.query("state");
@@ -121,12 +87,13 @@ oauthRoutes.get("/:provider/callback", async (c) => {
   if (!statePayload) return c.redirect(`${frontendBase}/?oauth_error=invalid_state`);
 
   try {
-    const tokenRes = await fetch(config.tokenUrl, {
+    const clientSecret = await decryptSecret(c.env, config.client_secret!);
+    const tokenRes = await fetch(config.token_url!, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: new URLSearchParams({
-        client_id: config.clientId!,
-        client_secret: config.clientSecret!,
+        client_id: config.client_id!,
+        client_secret: clientSecret,
         code,
         redirect_uri: redirectUri(c.env, provider),
         grant_type: "authorization_code",
@@ -136,18 +103,16 @@ oauthRoutes.get("/:provider/callback", async (c) => {
     const accessToken = tokenData.access_token;
     if (!accessToken) throw new Error(`未能获取access_token: ${JSON.stringify(tokenData)}`);
 
-    const userRes = await fetch(config.userinfoUrl, {
+    const userRes = await fetch(config.userinfo_url!, {
       headers: { Authorization: `Bearer ${accessToken}`, "User-Agent": "dnsmgr-cf" },
     });
     const profile = (await userRes.json()) as any;
 
-    // 不同平台的用户ID/用户名字段不一样，做个归一化
     const providerUserId = String(profile.id ?? profile.sub ?? profile.user_id ?? "");
     const providerUsername = profile.username ?? profile.login ?? profile.name ?? profile.email ?? providerUserId;
     if (!providerUserId) throw new Error("无法从第三方平台获取用户ID");
 
     if (statePayload.mode === "link") {
-      // 绑定模式：把这个第三方账号关联到当前登录用户
       await c.env.DB.prepare(
         `INSERT INTO oauth_accounts (user_id, provider, provider_user_id, provider_username, created_at)
          VALUES (?,?,?,?,?)
@@ -159,13 +124,11 @@ oauthRoutes.get("/:provider/callback", async (c) => {
       return c.redirect(`${frontendBase}/?oauth_linked=${provider}`);
     }
 
-    // 登录模式：查找是否已绑定过这个第三方账号
     const link = await c.env.DB.prepare("SELECT user_id FROM oauth_accounts WHERE provider = ? AND provider_user_id = ?")
       .bind(provider, providerUserId)
       .first<{ user_id: number }>();
-    if (!link) {
-      return c.redirect(`${frontendBase}/?oauth_error=not_linked&provider=${provider}`);
-    }
+    if (!link) return c.redirect(`${frontendBase}/?oauth_error=not_linked&provider=${provider}`);
+
     const user = await c.env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(link.user_id).first<any>();
     if (!user || user.status !== "active") return c.redirect(`${frontendBase}/?oauth_error=user_disabled`);
 
@@ -188,7 +151,6 @@ oauthRoutes.get("/:provider/callback", async (c) => {
   }
 });
 
-/** 已登录用户查看自己绑定了哪些第三方账号 */
 oauthRoutes.get("/links", requireAuth, async (c) => {
   const user = c.get("user") as JwtPayload;
   const { results } = await c.env.DB.prepare(
@@ -204,5 +166,78 @@ oauthRoutes.delete("/links/:provider", requireAuth, async (c) => {
   await c.env.DB.prepare("DELETE FROM oauth_accounts WHERE user_id = ? AND provider = ?")
     .bind(user.uid, c.req.param("provider"))
     .run();
+  return c.json({ ok: true });
+});
+
+// ==================== 管理员：第三方登录方式配置（替代原来写在wrangler.toml里的方式） ====================
+
+oauthRoutes.get("/admin/providers", requireAuth, requireAdmin, async (c) => {
+  const { results } = await c.env.DB.prepare("SELECT * FROM oauth_provider_configs ORDER BY sort_order").all<any>();
+  // client_secret 不明文返回，只告诉前端"是否已配置"
+  return c.json(
+    results.map((r) => ({
+      provider: r.provider,
+      label: r.label,
+      enabled: !!r.enabled,
+      sortOrder: r.sort_order,
+      clientId: r.client_id || "",
+      hasSecret: !!r.client_secret,
+      authorizeUrl: r.authorize_url || "",
+      tokenUrl: r.token_url || "",
+      userinfoUrl: r.userinfo_url || "",
+      scope: r.scope || "",
+    }))
+  );
+});
+
+oauthRoutes.put("/admin/providers/:provider", requireAuth, requireAdmin, async (c) => {
+  const provider = c.req.param("provider");
+  const body = await c.req.json<{
+    enabled?: boolean;
+    clientId?: string;
+    clientSecret?: string; // 留空表示不修改
+    authorizeUrl?: string;
+    tokenUrl?: string;
+    userinfoUrl?: string;
+    scope?: string;
+  }>();
+
+  const row = await c.env.DB.prepare("SELECT * FROM oauth_provider_configs WHERE provider = ?").bind(provider).first<any>();
+  if (!row) return c.json({ error: "不支持的登录方式" }, 404);
+
+  const encryptedSecret = body.clientSecret
+    ? c.env.ENCRYPT_KEY
+      ? await aesEncrypt(body.clientSecret, c.env.ENCRYPT_KEY)
+      : body.clientSecret
+    : row.client_secret;
+
+  await c.env.DB.prepare(
+    `UPDATE oauth_provider_configs SET
+       enabled=?, client_id=?, client_secret=?, authorize_url=?, token_url=?, userinfo_url=?, scope=?, updated_at=?
+     WHERE provider=?`
+  )
+    .bind(
+      body.enabled === undefined ? row.enabled : body.enabled ? 1 : 0,
+      body.clientId ?? row.client_id,
+      encryptedSecret,
+      body.authorizeUrl ?? row.authorize_url,
+      body.tokenUrl ?? row.token_url,
+      body.userinfoUrl ?? row.userinfo_url,
+      body.scope ?? row.scope,
+      now(),
+      provider
+    )
+    .run();
+  return c.json({ ok: true });
+});
+
+/** 拖拽排序：决定登录页上"使用XX登录"按钮的先后顺序 */
+oauthRoutes.put("/admin/providers/reorder", requireAuth, requireAdmin, async (c) => {
+  const { orderedProviders } = await c.req.json<{ orderedProviders: string[] }>();
+  await c.env.DB.batch(
+    orderedProviders.map((p, i) =>
+      c.env.DB.prepare("UPDATE oauth_provider_configs SET sort_order = ? WHERE provider = ?").bind(i, p)
+    )
+  );
   return c.json({ ok: true });
 });

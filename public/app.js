@@ -15,7 +15,7 @@ function cloudToggleHtml(id, checked, label) {
     <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" stroke="none">
       <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
     </svg>
-    <span style="font-size:13px">${label}</span>
+    <span style="font-size:14px">${label}</span>
   </span>`;
 }
 /** 绑定 cloudToggleHtml 生成的开关的点击事件，需在插入DOM后调用 */
@@ -36,6 +36,7 @@ let state = {
   currentDomainId: null,
   favorites: [],
   jumpToDomainId: null,
+  navCollapsed: {},
 };
 
 function toast(msg, type = "") {
@@ -132,7 +133,7 @@ async function renderLogin() {
     const { available } = await api("/oauth/providers");
     if (available.length) {
       document.getElementById("oauthButtons").innerHTML =
-        `<div style="text-align:center;color:var(--muted);font-size:12px;margin:10px 0">或使用以下方式登录</div>` +
+        `<div style="text-align:center;color:var(--muted);font-size:13px;margin:10px 0">或使用以下方式登录</div>` +
         available
           .map((p) => `<button class="secondary" style="width:100%;margin-top:6px" onclick="location.href='${API}/api/oauth/${p}/start?mode=login'">使用 ${OAUTH_LABELS[p]} 登录</button>`)
           .join("");
@@ -145,32 +146,60 @@ async function renderLogin() {
 // ---------------- 主框架 ----------------
 const NAV = [
   { key: "overview", label: "概览" },
-  { key: "domainList", label: "域名列表" },
-  { key: "domains", label: "域名解析记录" },
-  { key: "providers", label: "解析平台账号" },
+  {
+    label: "域名管理",
+    children: [
+      { key: "domainList", label: "域名列表" },
+      { key: "domains", label: "域名解析" },
+      { key: "favorites", label: "收藏" },
+      { key: "providers", label: "域名平台账户" },
+    ],
+  },
   { key: "ssl", label: "SSL 证书" },
-  { key: "users", label: "用户管理", adminOnly: true },
-  { key: "notify", label: "通知渠道" },
-  { key: "applink", label: "开放API / 登录直达链接", adminOnly: true },
+  { key: "misub", label: "MiSub订阅" },
+  {
+    label: "用户设置",
+    children: [
+      { key: "changePassword", label: "修改密码" },
+      { key: "oauthLinks", label: "第三方登录绑定" },
+      { key: "notify", label: "通知渠道" },
+    ],
+  },
+  {
+    label: "系统设置",
+    adminOnly: true,
+    children: [
+      { key: "users", label: "用户管理" },
+      { key: "misubDomain", label: "订阅域名设置" },
+      { key: "applink", label: "开放API" },
+      { key: "oauthAdmin", label: "第三方登录管理" },
+    ],
+  },
   { key: "tools", label: "工具箱" },
-  { key: "misub", label: "MiSub 订阅管理" },
 ];
+
+function renderNavItem(item) {
+  if (item.adminOnly && state.user.role !== "admin") return "";
+  if (item.children) {
+    const collapsed = !!state.navCollapsed[item.label];
+    return `<div class="nav-group">
+      <div class="nav-group-title" data-group="${item.label}">
+        <span>${item.label}</span>
+        <span class="nav-group-arrow ${collapsed ? "" : "open"}">▸</span>
+      </div>
+      <div class="nav-group-children ${collapsed ? "collapsed" : ""}">
+        ${item.children
+          .map((c) => `<a data-page="${c.key}" class="nav-child ${state.page === c.key ? "active" : ""}">${c.label}</a>`)
+          .join("")}
+      </div>
+    </div>`;
+  }
+  return `<a data-page="${item.key}" class="${state.page === item.key ? "active" : ""}">${item.label}</a>`;
+}
 
 async function renderShell() {
   const app = document.getElementById("app");
-  const navHtml = NAV.filter((n) => !n.adminOnly || state.user.role === "admin")
-    .map((n) => `<a data-page="${n.key}" class="${state.page === n.key ? "active" : ""}">${n.label}</a>`)
-    .join("");
-
-  try {
-    state.favorites = await api("/domains/favorites");
-  } catch {
-    state.favorites = [];
-  }
-  const favHtml = state.favorites.length
-    ? `<div class="nav-section-title">收藏</div>` +
-      state.favorites.map((f) => `<a data-jump-domain="${f.id}">★ ${f.domain_name}</a>`).join("")
-    : "";
+  const navHtml = NAV.map(renderNavItem).join("");
 
   app.innerHTML = `
     <div class="mobile-topbar">
@@ -180,7 +209,7 @@ async function renderShell() {
     <div class="sidebar-overlay" id="sidebarOverlay"></div>
     <div class="sidebar" id="sidebar">
       <h1>DNSMGR-CF</h1>
-      <nav>${navHtml}${favHtml}<a id="accountSettingsLink">账号设置</a><a id="logoutLink">退出登录 (${state.user.username})</a></nav>
+      <nav>${navHtml}<a id="logoutLink">退出登录 (${state.user.username})</a></nav>
     </div>
     <div class="main" id="main"></div>`;
 
@@ -197,42 +226,166 @@ async function renderShell() {
   overlay.onclick = closeMobileSidebar;
 
   app.querySelectorAll("[data-page]").forEach((a) => (a.onclick = () => { state.page = a.dataset.page; closeMobileSidebar(); render(); }));
-  app.querySelectorAll("[data-jump-domain]").forEach(
-    (a) => (a.onclick = () => {
-      state.page = "domains";
-      state.jumpToDomainId = Number(a.dataset.jumpDomain);
-      closeMobileSidebar();
-      render();
+  app.querySelectorAll("[data-group]").forEach(
+    (el) => (el.onclick = () => {
+      const g = el.dataset.group;
+      state.navCollapsed[g] = !state.navCollapsed[g];
+      renderShell();
     })
   );
-  document.getElementById("accountSettingsLink").onclick = showAccountSettingsModal;
   document.getElementById("logoutLink").onclick = logout;
   renderPage();
 }
 
-/** 账号设置弹窗：修改自己的密码 + 绑定/解绑第三方登录 */
-async function showAccountSettingsModal() {
+// ---------------- 收藏（页面） ----------------
+async function renderFavorites(main) {
+  main.innerHTML = `<div class="card"><h3>收藏的域名</h3><div id="favList">加载中...</div></div>`;
+  try {
+    const favorites = await api("/domains/favorites");
+    state.favorites = favorites;
+    const el = document.getElementById("favList");
+    el.innerHTML = favorites.length
+      ? `<table><tr><th>域名</th><th>操作</th></tr>${favorites
+          .map(
+            (f) => `<tr><td>${f.domain_name}</td>
+              <td><button class="jumpToRecords" data-id="${f.id}">查看解析记录</button>
+                  <button class="secondary unfavBtn" data-id="${f.id}">取消收藏</button></td></tr>`
+          )
+          .join("")}</table>`
+      : `<p style="color:var(--muted)">还没有收藏任何域名，去「域名列表」页点星标图标收藏</p>`;
+
+    el.querySelectorAll(".jumpToRecords").forEach(
+      (btn) => (btn.onclick = () => {
+        state.page = "domains";
+        state.jumpToDomainId = Number(btn.dataset.id);
+        render();
+      })
+    );
+    el.querySelectorAll(".unfavBtn").forEach(
+      (btn) => (btn.onclick = async () => {
+        await api(`/domains/${btn.dataset.id}/favorite`, { method: "PUT", body: { favorite: false } });
+        renderFavorites(main);
+      })
+    );
+  } catch (e) {
+    document.getElementById("favList").innerHTML = `<p style="color:red">${e.message}</p>`;
+  }
+}
+
+// ---------------- 第三方登录管理（系统设置，管理员） ----------------
+const OAUTH_ADMIN_FIELDS = {
+  github: ["clientId", "clientSecret"],
+  google: ["clientId", "clientSecret"],
+  nodeloc: ["clientId", "clientSecret", "authorizeUrl", "tokenUrl", "userinfoUrl", "scope"],
+};
+const OAUTH_FIELD_LABELS = {
+  clientId: "Client ID",
+  clientSecret: "Client Secret（留空表示不修改）",
+  authorizeUrl: "授权地址 (authorize)",
+  tokenUrl: "Token地址",
+  userinfoUrl: "用户信息地址 (userinfo)",
+  scope: "Scope",
+};
+
+async function renderOauthAdmin(main) {
+  main.innerHTML = `<div class="card">
+    <h3>第三方登录管理</h3>
+    <p style="color:var(--muted);font-size:14px">
+      开关决定登录页是否显示这个"使用XX登录"按钮；卡片可以拖动排序，决定按钮在登录页上的先后顺序。
+      GitHub/Google 需要先去对应平台申请 OAuth 应用；NodeLoc 端点不是标准化的，按你申请到的应用信息填。
+      回调地址统一是 <code id="oauthCallbackHint">加载中...</code>，去对应平台的应用设置里把这个填成"回调/重定向URI"。
+    </p>
+    <div id="oauthProviderList">加载中...</div>
+  </div>`;
+
+  const providers = await api("/oauth/admin/providers");
+  document.getElementById("oauthCallbackHint").textContent = `${API || location.origin}/api/oauth/<provider>/callback`;
+
+  renderOauthProviderList(providers);
+}
+
+function renderOauthProviderList(providers) {
+  const listEl = document.getElementById("oauthProviderList");
+  listEl.innerHTML = providers
+    .map(
+      (p) => `<div class="misub-card" draggable="true" data-id="${p.provider}" style="margin-bottom:10px;cursor:grab">
+        <div class="misub-card-head">
+          <div class="misub-card-title">⠿ ${p.label}</div>
+          <label class="switch"><input type="checkbox" class="toggleOauthProvider" data-provider="${p.provider}" ${p.enabled ? "checked" : ""} /><span class="slider"></span></label>
+        </div>
+        <div class="misub-card-sub">${p.clientId ? `Client ID: ${p.clientId}` : "还没配置"} ${p.hasSecret ? "· 已设置Secret" : "· 未设置Secret"}</div>
+        <button class="secondary editOauthProvider" data-provider="${p.provider}">编辑配置</button>
+      </div>`
+    )
+    .join("");
+
+  listEl.querySelectorAll(".toggleOauthProvider").forEach(
+    (cb) => (cb.onchange = async () => {
+      try {
+        await api(`/oauth/admin/providers/${cb.dataset.provider}`, { method: "PUT", body: { enabled: cb.checked } });
+        toast("已更新", "success");
+      } catch (e) {
+        toast(e.message, "error");
+        cb.checked = !cb.checked;
+      }
+    })
+  );
+  listEl.querySelectorAll(".editOauthProvider").forEach(
+    (btn) => (btn.onclick = () => showEditOauthProviderModal(providers.find((p) => p.provider === btn.dataset.provider)))
+  );
+
+  enableDragReorder(listEl, ".misub-card", async (orderedIds) => {
+    await api("/oauth/admin/providers/reorder", { method: "PUT", body: { orderedProviders: orderedIds } });
+  });
+}
+
+function showEditOauthProviderModal(provider) {
+  const fields = OAUTH_ADMIN_FIELDS[provider.provider] || [];
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
-    <div class="modal-box" style="width:420px">
-      <h3>账号设置</h3>
-      <label>修改自己的密码</label>
-      <input id="oldPwd" type="password" placeholder="原密码" style="width:100%;margin-bottom:4px" />
-      <input id="newSelfPwd" type="password" placeholder="新密码（至少6位）" style="width:100%" />
-      <button id="changeSelfPwdBtn" style="margin-top:6px">修改密码</button>
-      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
-        <label>第三方登录绑定</label>
-        <div id="oauthLinksList">加载中...</div>
-      </div>
+    <div class="modal-box" style="width:480px">
+      <h3>编辑 ${provider.label} 登录配置</h3>
+      ${fields
+        .map((f) => {
+          const currentValue = f === "clientSecret" ? "" : provider[f] || "";
+          return `<label style="font-size:14px;color:var(--muted);display:block;margin:10px 0 4px">${OAUTH_FIELD_LABELS[f]}</label>
+            <input class="oauthField" data-f="${f}" value="${String(currentValue).replace(/"/g, "&quot;")}" style="width:100%" />`;
+        })
+        .join("")}
       <div class="modal-actions">
-        <button class="secondary" id="closeAccountSettingsBtn">关闭</button>
+        <button class="secondary" id="cancelOauthEditBtn">取消</button>
+        <button id="saveOauthEditBtn">保存</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
-  document.getElementById("closeAccountSettingsBtn").onclick = () => overlay.remove();
+  document.getElementById("cancelOauthEditBtn").onclick = () => overlay.remove();
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
 
+  document.getElementById("saveOauthEditBtn").onclick = async () => {
+    const body = {};
+    overlay.querySelectorAll(".oauthField").forEach((input) => {
+      if (input.value) body[input.dataset.f] = input.value;
+    });
+    try {
+      await api(`/oauth/admin/providers/${provider.provider}`, { method: "PUT", body });
+      toast("保存成功", "success");
+      overlay.remove();
+      renderOauthAdmin(document.getElementById("main"));
+    } catch (e) {
+      toast(e.message, "error");
+    }
+  };
+}
+async function renderChangePassword(main) {
+  main.innerHTML = `<div class="card" style="max-width:420px">
+    <h3>修改密码</h3>
+    <label style="font-size:14px;color:var(--muted);display:block;margin-bottom:4px">原密码</label>
+    <input id="oldPwd" type="password" placeholder="原密码" style="width:100%;margin-bottom:10px" />
+    <label style="font-size:14px;color:var(--muted);display:block;margin-bottom:4px">新密码（至少6位）</label>
+    <input id="newSelfPwd" type="password" placeholder="新密码" style="width:100%" />
+    <button id="changeSelfPwdBtn" style="margin-top:14px">修改密码</button>
+  </div>`;
   document.getElementById("changeSelfPwdBtn").onclick = async () => {
     try {
       await api("/auth/change-password", {
@@ -240,41 +393,49 @@ async function showAccountSettingsModal() {
         body: { oldPassword: document.getElementById("oldPwd").value, newPassword: document.getElementById("newSelfPwd").value },
       });
       toast("密码修改成功", "success");
-      overlay.remove();
+      document.getElementById("oldPwd").value = "";
+      document.getElementById("newSelfPwd").value = "";
     } catch (e) {
       toast(e.message, "error");
     }
   };
+}
+
+// ---------------- 第三方登录绑定（页面） ----------------
+async function renderOauthLinks(main) {
+  main.innerHTML = `<div class="card" style="max-width:480px">
+    <h3>第三方登录绑定</h3>
+    <div id="oauthLinksList">加载中...</div>
+  </div>`;
 
   try {
-    const [{ available }, links] = await Promise.all([api("/oauth/providers"), api("/oauth/links")]);
+    const [{ available, labels }, links] = await Promise.all([api("/oauth/providers"), api("/oauth/links")]);
     const linkedProviders = new Set(links.map((l) => l.provider));
     document.getElementById("oauthLinksList").innerHTML = available.length
       ? available
           .map((p) => {
             const linked = linkedProviders.has(p);
-            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0">
-              <span>${OAUTH_LABELS[p]}${linked ? ` <span style="color:var(--success);font-size:12px">已绑定</span>` : ""}</span>
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+              <span>${labels[p] || p}${linked ? ` <span style="color:var(--success);font-size:13px">已绑定</span>` : ""}</span>
               ${
                 linked
-                  ? `<button class="danger unlinkOauth" data-provider="${p}" style="padding:4px 10px;font-size:12px">解绑</button>`
-                  : `<button class="secondary linkOauth" data-provider="${p}" style="padding:4px 10px;font-size:12px">绑定</button>`
+                  ? `<button class="danger unlinkOauth" data-provider="${p}" style="padding:4px 10px;font-size:13px">解绑</button>`
+                  : `<button class="secondary linkOauth" data-provider="${p}" style="padding:4px 10px;font-size:13px">绑定</button>`
               }
             </div>`;
           })
           .join("")
-      : `<p style="color:var(--muted);font-size:13px">管理员还没有配置任何第三方登录方式</p>`;
+      : `<p style="color:var(--muted);font-size:14px">管理员还没有在「系统设置 → 第三方登录管理」里启用任何登录方式</p>`;
 
-    overlay.querySelectorAll(".linkOauth").forEach(
+    document.querySelectorAll(".linkOauth").forEach(
       (btn) => (btn.onclick = () => { location.href = `${API}/api/oauth/${btn.dataset.provider}/start?mode=link&token=${state.token}`; })
     );
-    overlay.querySelectorAll(".unlinkOauth").forEach(
+    document.querySelectorAll(".unlinkOauth").forEach(
       (btn) => (btn.onclick = async () => {
         try {
           await api(`/oauth/links/${btn.dataset.provider}`, { method: "DELETE" });
           toast("已解绑", "success");
-          overlay.remove();
-          showAccountSettingsModal();
+          renderOauthLinks(main);
         } catch (e) {
           toast(e.message, "error");
         }
@@ -292,6 +453,7 @@ function renderPage() {
     overview: renderOverview,
     domainList: renderDomainList,
     domains: renderDomains,
+    favorites: renderFavorites,
     providers: renderProviders,
     ssl: renderSsl,
     users: renderUsers,
@@ -299,6 +461,10 @@ function renderPage() {
     applink: renderApplink,
     tools: renderTools,
     misub: renderMisub,
+    misubDomain: renderMisubDomainSettings,
+    changePassword: renderChangePassword,
+    oauthLinks: renderOauthLinks,
+    oauthAdmin: renderOauthAdmin,
   };
   (renderers[state.page] || renderOverview)(main);
 }
@@ -311,10 +477,10 @@ async function renderOverview(main) {
     const el = document.getElementById("overviewContent");
     el.innerHTML = `
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px">
-        <div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:13px">域名总数</div><div style="font-size:28px;font-weight:600">${data.domainCount}</div></div>
-        ${data.providerCount !== null ? `<div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:13px">解析平台账号</div><div style="font-size:28px;font-weight:600">${data.providerCount}</div></div>` : ""}
-        <div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:13px">已签发证书</div><div style="font-size:28px;font-weight:600;color:var(--success)">${data.certStats.issued || 0}</div></div>
-        ${data.userCount !== null ? `<div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:13px">用户数</div><div style="font-size:28px;font-weight:600">${data.userCount}</div></div>` : ""}
+        <div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:14px">域名总数</div><div style="font-size:28px;font-weight:600">${data.domainCount}</div></div>
+        ${data.providerCount !== null ? `<div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:14px">解析平台账号</div><div style="font-size:28px;font-weight:600">${data.providerCount}</div></div>` : ""}
+        <div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:14px">已签发证书</div><div style="font-size:28px;font-weight:600;color:var(--success)">${data.certStats.issued || 0}</div></div>
+        ${data.userCount !== null ? `<div class="card" style="margin-bottom:0"><div style="color:var(--muted);font-size:14px">用户数</div><div style="font-size:28px;font-weight:600">${data.userCount}</div></div>` : ""}
       </div>
       <div class="card">
         <h3>20天内到期的域名</h3>
@@ -356,7 +522,7 @@ let dragSrcId = null;
 
 async function renderDomainList(main) {
   main.innerHTML = `<div class="card">
-    <h3>域名列表 <span style="font-weight:400;font-size:12px;color:var(--muted)">拖动左侧 ⠿ 图标调整顺序，会同步到「域名解析记录」页面上方下拉框的排列顺序</span></h3>
+    <h3>域名列表 <span style="font-weight:400;font-size:13px;color:var(--muted)">拖动左侧 ⠿ 图标调整顺序，会同步到「域名解析记录」页面上方下拉框的排列顺序</span></h3>
     <div style="margin-bottom:10px">按解析平台筛选：<select id="domainListProviderFilter"><option value="">全部平台账号</option></select></div>
     <div id="domainListTable">加载中...</div>
     <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
@@ -369,6 +535,12 @@ async function renderDomainList(main) {
   const providerFilter = document.getElementById("domainListProviderFilter");
   providerFilter.innerHTML +=
     providers.map((p) => `<option value="${p.id}">${p.name}（${p.type}）</option>`).join("");
+
+  try {
+    state.favorites = await api("/domains/favorites");
+  } catch {
+    state.favorites = [];
+  }
 
   const load = async () => {
     const providerId = providerFilter.value;
@@ -606,7 +778,7 @@ async function loadRecords(domainId) {
                 <td class="value-cell" title="${String(r.value).replace(/"/g, "&quot;")}">${r.value}</td>
                 <td>${r.ttl}</td>
                 ${isCloudflare ? `<td style="width:72px;text-align:center"><span class="cloud-toggle-cell" data-id="${r.id}" data-checked="${r.proxied ? "true" : "false"}" style="cursor:pointer;display:inline-flex">${cloudIcon(r.proxied)}</span></td>` : ""}
-                <td><input class="remarkInput" data-id="${r.id}" value="${(r.remark || "").replace(/"/g, "&quot;")}" placeholder="备注" style="width:150px;font-size:12px" /></td>
+                <td><input class="remarkInput" data-id="${r.id}" value="${(r.remark || "").replace(/"/g, "&quot;")}" placeholder="备注" style="width:150px;font-size:13px" /></td>
                 <td style="white-space:nowrap"><button class="secondary editRecord" data-record='${JSON.stringify(r).replace(/'/g, "&apos;")}'>修改</button>
                     <button class="danger delRecord" data-id="${r.id}">删除</button></td>
               </tr>`
@@ -964,10 +1136,10 @@ async function renderSsl(main) {
   main.innerHTML = `<div class="card"><h3>申请证书</h3>
     <select id="sslDomain"></select>
     <input id="cn" placeholder="主域名，留空默认为域名本身" />
-    <label style="display:block;font-size:13px;color:var(--muted);margin:8px 0 4px">附加域名（SAN，可选，一行一个，不用逗号分隔）</label>
-    <textarea id="sans" placeholder="例如：&#10;www.example.com&#10;api.example.com" style="width:100%;min-height:70px;font-family:inherit;font-size:13px;padding:8px;border:1px solid var(--border);border-radius:6px;box-sizing:border-box"></textarea>
+    <label style="display:block;font-size:14px;color:var(--muted);margin:8px 0 4px">附加域名（SAN，可选，一行一个，不用逗号分隔）</label>
+    <textarea id="sans" placeholder="例如：&#10;www.example.com&#10;api.example.com" style="width:100%;min-height:70px;font-family:inherit;font-size:14px;padding:8px;border:1px solid var(--border);border-radius:6px;box-sizing:border-box"></textarea>
     <div style="margin-top:8px"><button id="issueBtn">申请</button></div>
-    <p style="color:var(--muted);font-size:12px">申请过程会自动通过该域名绑定的解析平台写入/清理 _acme-challenge TXT 记录完成 DNS-01 验证，可能需要1~3分钟。</p>
+    <p style="color:var(--muted);font-size:13px">申请过程会自动通过该域名绑定的解析平台写入/清理 _acme-challenge TXT 记录完成 DNS-01 验证，可能需要1~3分钟。</p>
     </div>
     <div class="card">
       <h3>证书列表</h3>
@@ -1463,7 +1635,7 @@ async function showEditNotifyModal(channelId, type, main) {
 // ---------------- 开放API / 登录直达链接 ----------------
 async function renderApplink(main) {
   main.innerHTML = `<div class="card"><h3>API Key（供 IDC 系统调用「获取域名登录直达链接」接口）</h3>
-    <p style="font-size:12px;color:var(--muted)">
+    <p style="font-size:13px;color:var(--muted)">
       调用方式：POST ${API || location.origin}/api/open/applink&nbsp;
       body: {"apiKey":"...","apiSecret":"...","domainId":1} → 返回 {"url": "https://.../direct-login?token=..."}
     </p>
@@ -1550,7 +1722,7 @@ async function renderTools(main) {
     </div>
     <div class="card">
       <h3>网站证书检查</h3>
-      <p style="color:var(--muted);font-size:12px;margin-top:-6px">基于 Certificate Transparency 公开日志（crt.sh）查询该域名最近签发过的证书记录</p>
+      <p style="color:var(--muted);font-size:13px;margin-top:-6px">基于 Certificate Transparency 公开日志（crt.sh）查询该域名最近签发过的证书记录</p>
       <input id="certCheckDomain" placeholder="example.com" />
       <button id="certCheckBtn">查询</button>
       <div id="certCheckResult" style="margin-top:10px"></div>
@@ -1631,37 +1803,36 @@ let misubDomain = null;
 
 async function renderMisub(main) {
   main.innerHTML = `
-    <div class="card" id="misubDomainCard">
-      <h3>订阅域名</h3>
-      <div id="misubDomainBody">加载中...</div>
-    </div>
-
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <h3>我的订阅组 <span id="profileCount" style="color:var(--muted);font-weight:400;font-size:13px"></span></h3>
+        <h3>我的订阅组 <span id="profileCount" style="color:var(--muted);font-weight:400;font-size:14px"></span></h3>
         <button id="createProfileBtn">新增</button>
       </div>
-      <p style="color:var(--muted);font-size:12px;margin-top:-4px">把手动节点自由组合，生成一条对外的订阅链接，卡片可拖动排序。</p>
-      <div id="profileGrid" class="misub-grid-auto" style="margin-top:10px">加载中...</div>
+      <p style="color:var(--muted);font-size:13px;margin-top:-4px">把手动节点自由组合，生成一条对外的订阅链接，卡片可拖动排序。</p>
+      <div id="profileGrid" class="misub-grid-profiles" style="margin-top:10px">加载中...</div>
     </div>
 
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <h3>手动节点 <span id="nodeCount" style="color:var(--muted);font-weight:400;font-size:13px"></span></h3>
+        <h3>手动节点 <span id="nodeCount" style="color:var(--muted);font-weight:400;font-size:14px"></span></h3>
         <div>
           <button class="secondary" id="importSubAsNodesBtn">订阅导入</button>
           <button id="addNodeBtn">新增</button>
         </div>
       </div>
       <div class="misub-group-tabs" id="nodeGroupTabs" style="margin-top:10px"></div>
-      <div id="nodeGrid" class="misub-grid-auto">加载中...</div>
+      <div id="nodeGrid" class="misub-grid-nodes">加载中...</div>
       <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
         <label><input type="checkbox" id="selectAllNodes" /> 全选</label>
         <button class="danger" id="batchDeleteNodesBtn" style="margin-left:6px">批量删除</button>
       </div>
     </div>`;
 
-  await loadMisubDomainSetting();
+  try {
+    misubDomain = (await api("/misub/settings")).domain;
+  } catch {
+    misubDomain = null;
+  }
   await loadMisubProfiles();
   await loadMisubNodes();
 
@@ -1670,18 +1841,26 @@ async function renderMisub(main) {
   document.getElementById("importSubAsNodesBtn").onclick = () => showImportSubAsNodesModal();
 }
 
-// ---------------- 订阅域名设置 ----------------
-async function loadMisubDomainSetting() {
+// ---------------- 订阅域名设置（独立页面，在「系统设置」里） ----------------
+async function renderMisubDomainSettings(main) {
+  main.innerHTML = `<div class="card" style="max-width:560px">
+    <h3>订阅域名设置</h3>
+    <div id="misubDomainBody">加载中...</div>
+  </div>`;
+  await loadMisubDomainSetting(main);
+}
+
+async function loadMisubDomainSetting(main) {
   const { domain } = await api("/misub/settings");
   misubDomain = domain;
   const body = document.getElementById("misubDomainBody");
   const isAdmin = state.user.role === "admin";
 
   body.innerHTML = `
-    <p style="color:var(--muted);font-size:13px">
-      订阅链接默认用当前Worker的地址。想用自己的短域名（比如 <code>sub.你的域名.com</code>），
+    <p style="color:var(--muted);font-size:14px">
+      MiSub 订阅链接默认用当前Worker的地址。想用自己的短域名（比如 <code>sub.你的域名.com</code>），
       要先去 <b>Cloudflare Dashboard → Workers & Pages → 这个Worker → Settings → Domains & Routes → Add Custom Domain</b>
-      绑定一个你名下的域名（域名要在Cloudflare上才能绑定），绑定成功后把同一个域名填在下面，订阅链接就会用这个域名了。
+      绑定一个你名下、DNS托管在Cloudflare上的域名，绑定成功后把同一个域名填在下面，订阅链接就会用这个域名了。
     </p>
     ${
       isAdmin
@@ -1698,8 +1877,7 @@ async function loadMisubDomainSetting() {
       try {
         await api("/misub/settings", { method: "PUT", body: { domain: value } });
         toast("已保存", "success");
-        loadMisubDomainSetting();
-        loadMisubProfiles();
+        loadMisubDomainSetting(main);
       } catch (e) {
         toast(e.message, "error");
       }
@@ -1709,7 +1887,7 @@ async function loadMisubDomainSetting() {
 
 function misubProfileLink(profile) {
   const base = misubDomain ? `https://${misubDomain}` : API || location.origin;
-  return `${base}/sub/${profile.custom_id || profile.share_token}`;
+  return `${base}/${profile.custom_id || profile.share_token}`;
 }
 
 // ---------------- 订阅组卡片 ----------------
@@ -1729,12 +1907,8 @@ async function loadMisubProfiles() {
       const nodeCount = JSON.parse(p.node_ids || "[]").length;
       return `<div class="misub-card" draggable="true" data-id="${p.id}">
         <div class="misub-card-head">
-          <div>
-            <span class="tag">订阅组</span>
-            <div class="misub-card-title">${p.name}</div>
-          </div>
+          <div class="misub-card-title">${p.name}</div>
           <div class="misub-card-icons">
-            <span class="viewProfileLog" data-id="${p.id}" title="访问日志">${MISUB_ICONS.eye}</span>
             <span class="showQr" data-link="${link}" title="二维码">${MISUB_ICONS.qrcode}</span>
             <span class="editProfile" data-id="${p.id}" title="编辑">${MISUB_ICONS.edit}</span>
             <span class="delProfile" data-id="${p.id}" title="删除">${MISUB_ICONS.trash}</span>
@@ -1746,7 +1920,7 @@ async function loadMisubProfiles() {
           <label class="switch"><input type="checkbox" class="toggleProfileEnabled" data-id="${p.id}" ${p.enabled ? "checked" : ""} /><span class="slider"></span></label>
         </div>
         <div class="misub-link-row">
-          <span class="value-cell" style="max-width:none;flex:1;font-size:12px;color:var(--muted)">${link}</span>
+          <span class="value-cell" style="max-width:none;flex:1;font-size:13px;color:var(--muted)">${link}</span>
           <span class="copyProfileLink" data-link="${link}" title="复制链接">${MISUB_ICONS.copy}</span>
         </div>
       </div>`;
@@ -1756,19 +1930,9 @@ async function loadMisubProfiles() {
   grid.querySelectorAll(".toggleProfileEnabled").forEach(
     (cb) => (cb.onchange = () => api(`/misub/profiles/${cb.dataset.id}`, { method: "PUT", body: { enabled: cb.checked } }))
   );
-  grid.querySelectorAll(".copyProfileLink").forEach(
-    (el) => (el.onclick = async () => {
-      try {
-        await navigator.clipboard.writeText(el.dataset.link);
-        toast("链接已复制", "success");
-      } catch {
-        toast("复制失败，请手动选中复制", "error");
-      }
-    })
-  );
+  grid.querySelectorAll(".copyProfileLink").forEach((el) => (el.onclick = () => copyMisubLink(el.dataset.link)));
   grid.querySelectorAll(".showQr").forEach((el) => (el.onclick = () => showQrModal(el.dataset.link)));
   grid.querySelectorAll(".editProfile").forEach((el) => (el.onclick = () => showMisubProfileModal(Number(el.dataset.id))));
-  grid.querySelectorAll(".viewProfileLog").forEach((el) => (el.onclick = () => showProfileLogModal(Number(el.dataset.id))));
   grid.querySelectorAll(".delProfile").forEach(
     (el) => (el.onclick = async () => {
       if (!confirm("确认删除该订阅组？对应的订阅链接会立即失效。")) return;
@@ -1778,8 +1942,17 @@ async function loadMisubProfiles() {
   );
 
   enableDragReorder(grid, ".misub-card", async (orderedIds) => {
-    await api("/misub/profiles/reorder", { method: "PUT", body: { orderedIds } });
+    await api("/misub/profiles/reorder", { method: "PUT", body: { orderedIds: orderedIds.map(Number) } });
   });
+}
+
+async function copyMisubLink(link) {
+  try {
+    await navigator.clipboard.writeText(link);
+    toast("链接已复制", "success");
+  } catch {
+    toast("复制失败，请手动选中复制", "error");
+  }
 }
 
 function showQrModal(link) {
@@ -1789,29 +1962,16 @@ function showQrModal(link) {
     <div class="modal-box" style="width:280px;text-align:center">
       <h3>订阅二维码</h3>
       <img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(link)}" width="220" height="220" style="border-radius:8px" />
-      <p style="font-size:11px;color:var(--muted);word-break:break-all;margin-top:10px">${link}</p>
-      <div class="modal-actions" style="justify-content:center"><button id="closeQrBtn">关闭</button></div>
+      <p style="font-size:13px;color:var(--muted);word-break:break-all;margin-top:10px">${link}</p>
+      <div class="modal-actions" style="justify-content:center">
+        <button class="secondary" id="copyQrLinkBtn">复制链接</button>
+        <button id="closeQrBtn">关闭</button>
+      </div>
     </div>`;
   document.body.appendChild(overlay);
+  document.getElementById("copyQrLinkBtn").onclick = () => copyMisubLink(link);
   document.getElementById("closeQrBtn").onclick = () => overlay.remove();
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-}
-
-async function showProfileLogModal(profileId) {
-  const overlay = document.createElement("div");
-  overlay.className = "modal-overlay";
-  overlay.innerHTML = `<div class="modal-box" style="width:520px"><h3>访问日志</h3><div id="profileLogBody">加载中...</div>
-    <div class="modal-actions"><button id="closeLogBtn">关闭</button></div></div>`;
-  document.body.appendChild(overlay);
-  document.getElementById("closeLogBtn").onclick = () => overlay.remove();
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-
-  const logs = await api(`/misub/profiles/${profileId}/log`);
-  document.getElementById("profileLogBody").innerHTML = logs.length
-    ? `<table><tr><th>时间</th><th>IP</th><th>客户端</th></tr>${logs
-        .map((l) => `<tr><td>${new Date(l.created_at * 1000).toLocaleString()}</td><td>${l.ip || "-"}</td><td style="max-width:220px" class="value-cell" title="${(l.user_agent || "").replace(/"/g, "&quot;")}">${l.user_agent || "-"}</td></tr>`)
-        .join("")}</table>`
-    : `<p style="color:var(--muted)">还没有访问记录</p>`;
 }
 
 /** 新建/编辑分组弹窗：右侧"已选节点"支持拖拽排序，顺序决定生成的订阅链接里节点的先后顺序 */
@@ -1830,11 +1990,11 @@ async function showMisubProfileModal(profileId) {
       <input id="profileCustomId" placeholder="自定义ID（可选，3-32位字母数字，不填则用随机生成）" value="${existing ? existing.custom_id || "" : ""}" style="width:100%;margin-top:6px" />
       <div style="display:flex;gap:12px;margin-top:10px">
         <div style="flex:1">
-          <label style="font-size:13px;color:var(--muted)">可选节点（点击加入）</label>
+          <label style="font-size:14px;color:var(--muted)">可选节点（点击加入）</label>
           <div id="availableNodesList" style="max-height:38vh;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px;margin-top:4px"></div>
         </div>
         <div style="flex:1">
-          <label style="font-size:13px;color:var(--muted)">已选节点（可拖动排序，决定订阅链接里的先后顺序）</label>
+          <label style="font-size:14px;color:var(--muted)">已选节点（可拖动排序，决定订阅链接里的先后顺序）</label>
           <div id="selectedNodesList" style="max-height:38vh;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px;margin-top:4px"></div>
         </div>
       </div>
@@ -1852,7 +2012,7 @@ async function showMisubProfileModal(profileId) {
     const remaining = nodes.filter((n) => !selectedIds.includes(n.id));
     el.innerHTML = remaining.length
       ? remaining.map((n) => `<div class="misub-pick-row" data-id="${n.id}">+ ${n.name || n.url}</div>`).join("")
-      : `<p style="font-size:12px;color:var(--muted);padding:4px">没有更多可选节点了</p>`;
+      : `<p style="font-size:13px;color:var(--muted);padding:4px">没有更多可选节点了</p>`;
     el.querySelectorAll(".misub-pick-row").forEach(
       (row) => (row.onclick = () => {
         selectedIds.push(Number(row.dataset.id));
@@ -1868,7 +2028,7 @@ async function showMisubProfileModal(profileId) {
       ? selectedIds
           .map((id) => `<div class="misub-pick-row selected" draggable="true" data-id="${id}">⠿ ${nodeById[id] ? nodeById[id].name || nodeById[id].url : "（节点已被删除）"} <span class="removePick" data-id="${id}" style="float:right;cursor:pointer">✕</span></div>`)
           .join("")
-      : `<p style="font-size:12px;color:var(--muted);padding:4px">还没有选节点，从左边点击加入</p>`;
+      : `<p style="font-size:13px;color:var(--muted);padding:4px">还没有选节点，从左边点击加入</p>`;
     el.querySelectorAll(".removePick").forEach(
       (btn) => (btn.onclick = (e) => {
         e.stopPropagation();
@@ -1878,7 +2038,7 @@ async function showMisubProfileModal(profileId) {
       })
     );
     enableDragReorder(el, ".misub-pick-row.selected", (orderedIds) => {
-      selectedIds = orderedIds;
+      selectedIds = orderedIds.map(Number);
     });
   }
 
@@ -2001,7 +2161,7 @@ function renderNodeGrid(allNodes) {
 
   if (draggable) {
     enableDragReorder(grid, ".misub-node-card", async (orderedIds) => {
-      await api("/misub/nodes/reorder", { method: "PUT", body: { orderedIds } });
+      await api("/misub/nodes/reorder", { method: "PUT", body: { orderedIds: orderedIds.map(Number) } });
     });
   }
 }
@@ -2014,13 +2174,13 @@ async function showAddNodeModal(editingNode) {
   overlay.innerHTML = `
     <div class="modal-box" style="width:480px">
       <h3>${editingNode ? "编辑节点" : "新增手动节点"}</h3>
-      <p style="color:var(--muted);font-size:12px;margin-top:-6px">${editingNode ? "" : "支持单条编辑，也支持多行粘贴后批量导入节点。"}</p>
+      <p style="color:var(--muted);font-size:13px;margin-top:-6px">${editingNode ? "" : "支持单条编辑，也支持多行粘贴后批量导入节点。"}</p>
       <div style="display:flex;gap:8px;margin-top:6px">
         <input id="nodeNameInput" placeholder="节点名称（可选）" value="${editingNode ? (editingNode.name || "").replace(/"/g, "&quot;") : ""}" style="flex:1" />
         <input id="nodeGroupInput" placeholder="分组（可选，可输入新分组名）" list="nodeGroupOptions" value="${editingNode ? editingNode.group_name || "" : ""}" style="flex:1" />
         <datalist id="nodeGroupOptions">${groups.map((g) => `<option value="${g}">`).join("")}</datalist>
       </div>
-      <textarea id="nodeUrlInput" placeholder="输入单个链接，或粘贴多行链接批量导入..." style="width:100%;min-height:160px;font-family:monospace;font-size:12px;margin-top:8px">${editingNode ? editingNode.url : ""}</textarea>
+      <textarea id="nodeUrlInput" placeholder="输入单个链接，或粘贴多行链接批量导入..." style="width:100%;min-height:160px;font-family:monospace;font-size:13px;margin-top:8px">${editingNode ? editingNode.url : ""}</textarea>
       <div class="modal-actions">
         <button class="secondary" id="cancelNodeBtn">取消</button>
         <button id="saveNodeBtn">确认</button>
@@ -2055,31 +2215,115 @@ function showImportSubAsNodesModal() {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
-    <div class="modal-box" style="width:440px">
+    <div class="modal-box" style="width:520px">
       <h3>订阅导入为节点</h3>
-      <p style="color:var(--muted);font-size:12px;margin-top:-6px">拉取该订阅地址的内容，把里面的每个节点拆开、单独导入成手动节点（一次性导入，之后跟原订阅没有关联，订阅更新不会自动同步）。</p>
-      <input id="importSubUrl" placeholder="订阅地址 https://..." style="width:100%;margin-top:6px" />
-      <input id="importSubGroup" placeholder="导入到分组（可选）" style="width:100%;margin-top:6px" />
-      <div class="modal-actions">
-        <button class="secondary" id="cancelImportSubBtn">取消</button>
-        <button id="confirmImportSubBtn">导入</button>
+      <p style="color:var(--muted);font-size:13px;margin-top:-6px" id="importSubHint">拉取该订阅地址的内容，提取出节点后勾选要导入的（一次性导入，之后跟原订阅没有关联，订阅更新不会自动同步）。</p>
+      <div id="importSubStep1">
+        <input id="importSubUrl" placeholder="订阅地址 https://..." style="width:100%;margin-top:6px" />
+        <div class="modal-actions">
+          <button class="secondary" id="cancelImportSubBtn">取消</button>
+          <button id="extractSubBtn">提取节点</button>
+        </div>
+      </div>
+      <div id="importSubStep2" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+          <label><input type="checkbox" id="selectAllPreview" checked /> 全选（共 <span id="previewCount">0</span> 个）</label>
+          <button class="secondary" id="speedtestAllBtn">全部测速</button>
+        </div>
+        <div id="previewNodesList" style="max-height:40vh;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px;margin-top:6px"></div>
+        <input id="importSubGroup" placeholder="导入到分组（可选）" style="width:100%;margin-top:8px" />
+        <div class="modal-actions">
+          <button class="secondary" id="backToStep1Btn">上一步</button>
+          <button id="confirmImportSubBtn">导入选中节点</button>
+        </div>
       </div>
     </div>`;
   document.body.appendChild(overlay);
-  document.getElementById("cancelImportSubBtn").onclick = () => overlay.remove();
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.getElementById("cancelImportSubBtn").onclick = () => overlay.remove();
+
+  let previewItems = [];
+
+  document.getElementById("extractSubBtn").onclick = async () => {
+    const url = document.getElementById("importSubUrl").value.trim();
+    if (!url) return toast("请填写订阅地址", "error");
+    const btn = document.getElementById("extractSubBtn");
+    btn.textContent = "提取中...";
+    btn.disabled = true;
+    try {
+      const r = await api("/misub/nodes/preview-subscription", { method: "POST", body: { url } });
+      if (r.error) {
+        toast(r.error, "error");
+        return;
+      }
+      previewItems = r.items.map((it) => ({ ...it, latency: null }));
+      renderPreviewList();
+      document.getElementById("importSubStep1").style.display = "none";
+      document.getElementById("importSubStep2").style.display = "block";
+      document.getElementById("importSubHint").textContent = `提取到 ${previewItems.length} 个节点，勾选要导入的，也可以先全部测速看看哪些能连上。`;
+    } catch (e) {
+      toast(e.message, "error");
+    } finally {
+      btn.textContent = "提取节点";
+      btn.disabled = false;
+    }
+  };
+
+  document.getElementById("backToStep1Btn").onclick = () => {
+    document.getElementById("importSubStep1").style.display = "block";
+    document.getElementById("importSubStep2").style.display = "none";
+  };
+
+  function renderPreviewList() {
+    document.getElementById("previewCount").textContent = previewItems.length;
+    const el = document.getElementById("previewNodesList");
+    el.innerHTML = previewItems
+      .map(
+        (it, i) => `<div class="misub-pick-row" style="display:flex;align-items:center;gap:6px;cursor:default">
+          <input type="checkbox" class="previewCheck" data-i="${i}" checked />
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${it.name}</span>
+          <span class="previewLatency" data-i="${i}" style="font-size:13px;color:var(--muted);flex-shrink:0">${
+            it.latency === null ? "" : it.latency === "timeout" ? "超时" : `${it.latency}ms`
+          }</span>
+        </div>`
+      )
+      .join("");
+  }
+
+  document.getElementById("selectAllPreview").onchange = (e) => {
+    overlay.querySelectorAll(".previewCheck").forEach((cb) => (cb.checked = e.target.checked));
+  };
+
+  document.getElementById("speedtestAllBtn").onclick = async () => {
+    const btn = document.getElementById("speedtestAllBtn");
+    btn.textContent = "测速中...";
+    btn.disabled = true;
+    // 逐个测，避免同时发太多并发TCP连接
+    for (let i = 0; i < previewItems.length; i++) {
+      try {
+        const r = await api("/misub/speedtest-url", { method: "POST", body: { url: previewItems[i].url } });
+        previewItems[i].latency = r.ok ? r.latency : "timeout";
+      } catch {
+        previewItems[i].latency = "timeout";
+      }
+      const badge = overlay.querySelector(`.previewLatency[data-i="${i}"]`);
+      if (badge) badge.textContent = previewItems[i].latency === "timeout" ? "超时" : `${previewItems[i].latency}ms`;
+    }
+    btn.textContent = "全部测速";
+    btn.disabled = false;
+    toast("测速完成", "success");
+  };
 
   document.getElementById("confirmImportSubBtn").onclick = async () => {
-    const url = document.getElementById("importSubUrl").value;
+    const checkedIdx = [...overlay.querySelectorAll(".previewCheck:checked")].map((cb) => Number(cb.dataset.i));
+    if (!checkedIdx.length) return toast("请至少勾选一个节点", "error");
+    const items = checkedIdx.map((i) => ({ name: previewItems[i].name, url: previewItems[i].url }));
     const group = document.getElementById("importSubGroup").value;
-    if (!url) return toast("请填写订阅地址", "error");
     try {
-      const r = await api("/misub/nodes/import-subscription", { method: "POST", body: { url, group } });
-      toast(r.error ? r.error : `已导入 ${r.imported} 个节点`, r.error ? "error" : "success");
-      if (!r.error) {
-        overlay.remove();
-        loadMisubNodes();
-      }
+      const r = await api("/misub/nodes/import-selected", { method: "POST", body: { items, group } });
+      toast(`已导入 ${r.imported} 个节点`, "success");
+      overlay.remove();
+      loadMisubNodes();
     } catch (e) {
       toast(e.message, "error");
     }
@@ -2097,7 +2341,7 @@ function enableDragReorder(container, itemSelector, onReorder) {
     });
     el.addEventListener("dragend", async () => {
       el.classList.remove("dragging");
-      const orderedIds = [...container.querySelectorAll(itemSelector)].map((e) => Number(e.dataset.id));
+      const orderedIds = [...container.querySelectorAll(itemSelector)].map((e) => e.dataset.id);
       await onReorder(orderedIds);
     });
     el.addEventListener("dragover", (e) => {

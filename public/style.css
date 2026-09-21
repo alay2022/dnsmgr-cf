@@ -53,9 +53,28 @@ body {
 }
 .sidebar nav a:hover:not(.active) { background: #f4f6f9; color: var(--text); }
 .nav-section-title {
-  font-size: 12px; color: var(--muted); padding: 14px 14px 6px;
+  font-size: 14px; color: var(--muted); padding: 14px 14px 6px;
   text-transform: uppercase; letter-spacing: .4px;
 }
+
+.nav-group { margin-bottom: 2px; }
+.nav-group-title {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; font-size: 14px; color: #4e5969; cursor: pointer;
+  border-radius: 8px; user-select: none;
+}
+.nav-group-title:hover { background: #f4f6f9; color: var(--text); }
+.nav-group-arrow { font-size: 10px; transition: transform .15s ease; color: var(--muted); }
+.nav-group-arrow.open { transform: rotate(90deg); }
+.nav-group-children { overflow: hidden; max-height: 500px; transition: max-height .18s ease; }
+.nav-group-children.collapsed { max-height: 0; }
+.nav-child {
+  display: block; padding: 9px 14px 9px 28px; margin-bottom: 2px;
+  color: #4e5969; text-decoration: none; cursor: pointer; font-size: 14px;
+  border-radius: 8px; transition: background .12s ease, color .12s ease;
+}
+.nav-child.active { background: var(--primary-light); color: var(--primary); font-weight: 600; }
+.nav-child:hover:not(.active) { background: #f4f6f9; color: var(--text); }
 
 .main { flex: 1; padding: 24px; overflow: auto; }
 
@@ -67,9 +86,9 @@ body {
   margin-bottom: 16px;
   box-shadow: 0 1px 2px rgba(0,0,0,.03);
 }
-.card h3 { margin-top: 0; font-size: 15px; font-weight: 600; }
+.card h3 { margin-top: 0; font-size: 16px; font-weight: 600; }
 
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 500; }
 tr:last-child td { border-bottom: none; }
@@ -81,7 +100,7 @@ button {
   padding: 7px 16px;
   border-radius: 8px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   transition: opacity .12s ease;
 }
@@ -93,7 +112,7 @@ input, select, textarea {
   padding: 7px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
   margin-right: 8px;
   background: #fff;
   color: var(--text);
@@ -114,13 +133,13 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 
 .toast {
   position: fixed; top: 16px; right: 16px; padding: 10px 16px; border-radius: 8px;
-  background: #1d2129; color: #fff; font-size: 13px; z-index: 999;
+  background: #1d2129; color: #fff; font-size: 14px; z-index: 999;
   box-shadow: 0 4px 12px rgba(0,0,0,.15);
 }
 .toast.error { background: var(--danger); }
 .toast.success { background: var(--success); }
 
-.tag { padding: 2px 10px; border-radius: 999px; font-size: 12px; background: #f2f3f5; }
+.tag { padding: 2px 10px; border-radius: 999px; font-size: 13px; background: #f2f3f5; }
 .tag.issued { background: #e8ffea; color: #00b42a; }
 .tag.pending { background: #fff7e8; color: #ff7d00; }
 .tag.failed { background: #ffece8; color: var(--danger); }
@@ -132,12 +151,21 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 }
 .modal-box {
   background: #fff; border-radius: 14px; padding: 22px; width: 640px; max-width: 90vw;
-  max-height: 85vh; overflow: auto;
+  max-height: 85vh; overflow: auto; scrollbar-width: thin; scrollbar-color: transparent transparent;
 }
+.modal-box:hover { scrollbar-color: #d1d5db transparent; }
+.modal-box::-webkit-scrollbar { width: 6px; }
+.modal-box::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
+.modal-box:hover::-webkit-scrollbar-thumb { background: #d1d5db; }
+.modal-box [style*="overflow"] { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.modal-box [style*="overflow"]:hover { scrollbar-color: #d1d5db transparent; }
+.modal-box [style*="overflow"]::-webkit-scrollbar { width: 6px; }
+.modal-box [style*="overflow"]::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
+.modal-box [style*="overflow"]:hover::-webkit-scrollbar-thumb { background: #d1d5db; }
 .modal-box h3 { margin-top: 0; }
-.modal-box label { font-size: 13px; color: var(--muted); display: block; margin: 12px 0 4px; }
+.modal-box label { font-size: 14px; color: var(--muted); display: block; margin: 12px 0 4px; }
 .modal-box textarea {
-  width: 100%; min-height: 140px; font-family: Consolas, Menlo, monospace; font-size: 12px;
+  width: 100%; min-height: 140px; font-family: Consolas, Menlo, monospace; font-size: 13px;
   padding: 10px; border: 1px solid var(--border); border-radius: 8px; resize: vertical;
   box-sizing: border-box;
 }
@@ -167,7 +195,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 /* ============================================================
    MiSub 卡片式布局（自适应网格，一行放几个由容器宽度决定，不再固定死2列/3列）
    ============================================================ */
-.misub-grid-auto { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.misub-grid-profiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 10px; }
+.misub-grid-nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(480px, 1fr)); gap: 10px; }
 
 .misub-card {
   background: var(--card); border: 1px solid var(--border); border-radius: 10px;
@@ -178,9 +207,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .misub-card-icons { display: flex; gap: 6px; color: var(--muted); flex-shrink: 0; padding-top: 2px; }
 .misub-card-icons svg { width: 14px; height: 14px; cursor: pointer; }
 .misub-card-icons svg:hover { color: var(--primary); }
-.misub-card-title { font-weight: 600; font-size: 14px; margin-top: 4px; }
-.misub-card-sub { font-size: 12px; color: var(--muted); margin: 4px 0 8px; }
-.misub-toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 13px; }
+.misub-card-title { font-weight: 600; font-size: 15px; margin-top: 4px; }
+.misub-card-sub { font-size: 13px; color: var(--muted); margin: 4px 0 8px; }
+.misub-toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 14px; }
 .misub-link-row {
   display: flex; align-items: center; gap: 6px; margin-top: 8px; padding-top: 8px;
   border-top: 1px solid var(--border);
@@ -205,8 +234,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
   padding: 9px 11px; display: flex; align-items: center; gap: 7px; cursor: grab; position: relative;
 }
 .misub-node-card[draggable="false"] { cursor: default; }
-.misub-node-card .chip { font-size: 11px; padding: 2px 7px; border-radius: 999px; background: #eef2ff; color: #4338ca; white-space: nowrap; }
-.misub-node-card .node-name { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.misub-node-card .chip { font-size: 13px; padding: 2px 7px; border-radius: 999px; background: #eef2ff; color: #4338ca; white-space: nowrap; }
+.misub-node-card .node-name { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .misub-node-card .node-actions { display: none; gap: 7px; color: var(--muted); flex-shrink: 0; }
 .misub-node-card:hover .node-actions { display: flex; }
 .misub-node-card .node-actions svg { width: 14px; height: 14px; cursor: pointer; }
@@ -215,14 +244,14 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 
 .misub-group-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 .misub-group-tab {
-  padding: 5px 12px; border-radius: 999px; font-size: 12px; background: #f1f5f9; color: var(--text);
+  padding: 5px 12px; border-radius: 999px; font-size: 13px; background: #f1f5f9; color: var(--text);
   cursor: pointer; border: 1px solid transparent;
 }
 .misub-group-tab.active { background: var(--primary); color: #fff; }
 
 /* 订阅组编辑弹窗里的"可选/已选节点"列表 */
 .misub-pick-row {
-  padding: 6px 8px; font-size: 12px; border-radius: 6px; cursor: pointer; overflow: hidden;
+  padding: 6px 8px; font-size: 13px; border-radius: 6px; cursor: pointer; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
 .misub-pick-row:hover { background: #f1f5f9; }

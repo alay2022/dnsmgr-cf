@@ -125,3 +125,10 @@ export function randomToken(len = 32): string {
   const bytes = crypto.getRandomValues(new Uint8Array(len));
   return bufToHex(bytes.buffer as ArrayBuffer);
 }
+
+/** 生成短随机ID（字母数字混合），用于MiSub订阅链接这种需要短一点、但仍然不容易被猜到的场景 */
+const SHORT_ID_CHARS = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 去掉容易看混的 0/O/1/l/I
+export function randomShortId(len = 6): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(len));
+  return [...bytes].map((b) => SHORT_ID_CHARS[b % SHORT_ID_CHARS.length]).join("");
+}

@@ -16,19 +16,10 @@ export interface Env {
   JWT_EXPIRE_SECONDS: string;
   APPLINK_EXPIRE_SECONDS: string;
   ENCRYPT_KEY?: string; // AES-GCM 密钥（base64），用于 provider 凭据加密；建议用 secret 单独设置
-  // 第三方登录（GitHub / Google 是标准OAuth2；NodeLoc 端点因平台特殊做成通用可配置）
+  // 第三方登录：具体每个平台的Client ID/Secret/端点地址已经从这里挪到数据库（管理员在「系统设置→第三方登录管理」里维护），
+  // 这两个是仅有的、跟部署环境相关、不适合放数据库的基础地址：
   OAUTH_REDIRECT_BASE?: string; // 本Worker自己的地址，如 https://dnsmgr-cf.alay.workers.dev
   FRONTEND_BASE?: string; // 前端Pages地址，登录完成后跳回这里
-  GITHUB_OAUTH_CLIENT_ID?: string;
-  GITHUB_OAUTH_CLIENT_SECRET?: string;
-  GOOGLE_OAUTH_CLIENT_ID?: string;
-  GOOGLE_OAUTH_CLIENT_SECRET?: string;
-  NODELOC_OAUTH_CLIENT_ID?: string;
-  NODELOC_OAUTH_CLIENT_SECRET?: string;
-  NODELOC_OAUTH_AUTHORIZE_URL?: string;
-  NODELOC_OAUTH_TOKEN_URL?: string;
-  NODELOC_OAUTH_USERINFO_URL?: string;
-  NODELOC_OAUTH_SCOPE?: string;
   MISUB_SUBCONVERTER_URL?: string; // 可选，配置后支持把订阅转换为Clash/Surge/singbox等客户端专属格式
 }
 

@@ -42,7 +42,7 @@ app.route("/api/overview", overviewRoutes);
 app.route("/api/tools", toolsRoutes);
 app.route("/api/oauth", oauthRoutes);
 app.route("/api/misub", misubRoutes);
-app.route("/", misubPublicRoutes); // 公开订阅输出：GET /sub/:token，不需要登录
+app.route("/", misubPublicRoutes); // 公开订阅输出：GET /:idOrToken，不需要登录
 
 app.notFound((c) => c.json({ error: "Not Found" }, 404));
 app.onError((err, c) => {
